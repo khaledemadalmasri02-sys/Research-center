@@ -131,12 +131,15 @@ export type ParsedImport = {
 
 function cellToString(cell: XLSX.CellObject | undefined): string {
   if (!cell) return "";
-  if (cell.t === "n") return String(cell.v ?? "");
+  // For date serial numbers stored as numbers, prefer the formatted string (cell.w)
+  // so we get "2024-01-15" rather than "45306" (Excel date serial).
+  if (cell.t === "n") return String(cell.w ?? cell.v ?? "").trim();
   if (cell.t === "d") {
-    const d = XLSX.SSF.parse_date_code(cell.v as number);
-    if (d) {
+    // cellDates:false means this branch is rarely hit, but handle it anyway
+    const v = cell.v;
+    if (v instanceof Date) {
       const pad = (n: number) => String(n).padStart(2, "0");
-      return `${d.y}-${pad(d.m)}-${pad(d.d)}`;
+      return `${v.getFullYear()}-${pad(v.getMonth() + 1)}-${pad(v.getDate())}`;
     }
   }
   return String(cell.w ?? cell.v ?? "").trim();
@@ -147,7 +150,10 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = e.target?.result;
+        // FileReader.readAsArrayBuffer returns ArrayBuffer, but XLSX.read with
+        // type:"array" expects Uint8Array — convert explicitly to avoid silent failures.
+        const raw = e.target?.result as ArrayBuffer;
+        const data = new Uint8Array(raw);
         const wb = XLSX.read(data, { type: "array", cellDates: false, cellNF: true, cellText: true });
         const sheetName = wb.SheetNames[0];
         if (!sheetName) throw new Error("Empty workbook");

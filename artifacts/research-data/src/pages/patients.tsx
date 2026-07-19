@@ -156,22 +156,24 @@ export default function Patients() {
 
   async function handleExcelImportBatch(
     patients: Record<string, unknown>[]
-  ): Promise<{ imported: number; failed: number }> {
+  ): Promise<{ imported: number; failed: number; errors?: string[] }> {
     let imported = 0;
     let failed = 0;
+    const errors: string[] = [];
     for (const rec of patients) {
       try {
         await createPatient.mutateAsync({ data: rec as any });
         imported++;
-      } catch {
+      } catch (err) {
         failed++;
+        errors.push((err as Error).message || "Unknown error");
       }
     }
     if (imported > 0) {
       queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
       queryClient.invalidateQueries({ queryKey: getGetPatientStatsQueryKey() });
     }
-    return { imported, failed };
+    return { imported, failed, errors };
   }
 
   function handleJsonExport() {
