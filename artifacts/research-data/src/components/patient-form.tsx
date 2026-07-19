@@ -13,6 +13,7 @@ import { useCreatePatient, useUpdatePatient, getListPatientsQueryKey, getGetPati
 import { useQueryClient } from "@tanstack/react-query";
 import { useUpload } from "@workspace/object-storage-web";
 import { Upload, X, ImageIcon, Loader2, Clipboard, Plus } from "lucide-react";
+import { VoiceDictationTextarea } from "@/components/voice-dictation-textarea";
 import { parseVitals, serializeVitals, VITAL_DEFS } from "@/lib/vitals-utils";
 
 function VitalSignsInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
@@ -414,7 +415,9 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
             <FormField control={form.control} name="chiefComplaint" render={({ field }) => (
               <FormItem className="md:col-span-2">
                 <FormLabel>Chief Complaint</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} data-testid="textarea-chief-complaint" /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} data-testid="textarea-chief-complaint" />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -427,21 +430,27 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
             <FormField control={form.control} name="historyTrauma" render={({ field }) => (
               <FormItem>
                 <FormLabel>History (Trauma)</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="mechanismOfInjuryAndLocalisation" render={({ field }) => (
               <FormItem>
                 <FormLabel>Mechanism of Injury & Localisation</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="signsAndSymptomsTrauma" render={({ field }) => (
               <FormItem>
                 <FormLabel>Signs & Symptoms (Trauma)</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -454,21 +463,27 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
             <FormField control={form.control} name="historyMedical" render={({ field }) => (
               <FormItem>
                 <FormLabel>History (Medical)</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="signsAndSymptomsMedical" render={({ field }) => (
               <FormItem>
                 <FormLabel>Signs & Symptoms (Medical)</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="riskFactors" render={({ field }) => (
               <FormItem>
                 <FormLabel>Risk Factors</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -481,14 +496,18 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
             <FormField control={form.control} name="provisionalDiagnosis" render={({ field }) => (
               <FormItem>
                 <FormLabel>Provisional Diagnosis</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="emergencyReport" render={({ field }) => (
               <FormItem>
                 <FormLabel>Emergency Report</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -515,7 +534,9 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
             <FormField control={form.control} name="aiPredictionOutput" render={({ field }) => (
               <FormItem>
                 <FormLabel>AI Prediction Output</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
@@ -528,21 +549,27 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
             <FormField control={form.control} name="finalConfirmedDiagnosis" render={({ field }) => (
               <FormItem>
                 <FormLabel>Final Confirmed Diagnosis</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="finalConfirmedDiagnosisAr" render={({ field }) => (
               <FormItem>
                 <FormLabel>Final Confirmed Diagnosis (د عزمي)</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} dir="rtl" /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} dir="rtl" />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
             <FormField control={form.control} name="notes" render={({ field }) => (
               <FormItem className="md:col-span-2">
                 <FormLabel>Additional Notes</FormLabel>
-                <FormControl><Textarea {...field} value={field.value || ""} /></FormControl>
+                <FormControl>
+                  <VoiceDictationTextarea {...field} value={field.value || ""} />
+                </FormControl>
                 <FormMessage />
               </FormItem>
             )} />
