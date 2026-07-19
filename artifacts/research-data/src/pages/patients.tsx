@@ -8,10 +8,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { useState, useMemo, useRef } from "react";
 import { format } from "date-fns";
-import { Search, Plus, ImageOff, FileSpreadsheet, Loader2, Download, Upload, Trash2, ChevronUp, ChevronDown, ChevronsUpDown } from "lucide-react";
+import { Search, Plus, ImageOff, FileSpreadsheet, Loader2, Download, Upload, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, ArchiveIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { exportToExcel } from "@/lib/export-utils";
+import { exportImagesAsZip } from "@/lib/export-zip-utils";
 import { ExcelImportDialog } from "@/components/excel-import-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
@@ -58,6 +59,8 @@ export default function Patients() {
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const [isZipExporting, setIsZipExporting] = useState(false);
+  const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
   const [excelImportOpen, setExcelImportOpen] = useState(false);
 
   async function handleDeleteSelected() {
@@ -137,6 +140,42 @@ export default function Patients() {
 
   const selectedCount = selectedIds.size;
   const exportTarget = selectedCount > 0 ? patients.filter((p) => selectedIds.has(p.id)) : patients;
+
+  async function handleZipExport() {
+    if (exportTarget.length === 0) {
+      toast({ title: "Nothing to export", variant: "destructive" });
+      return;
+    }
+    const withImages = exportTarget.filter(
+      (p) => (p as any).radiologyImages || p.radiologyImageFilePathOrLink
+    );
+    if (withImages.length === 0) {
+      toast({ title: "No images found", description: "None of the selected patients have radiology images.", variant: "destructive" });
+      return;
+    }
+    setIsZipExporting(true);
+    setZipProgress({ done: 0, total: 0 });
+    try {
+      const { downloaded, skipped } = await exportImagesAsZip(
+        withImages.map((p) => ({
+          patientId: p.patientId,
+          patientName: p.patientName,
+          radiologyImageFilePathOrLink: p.radiologyImageFilePathOrLink,
+          radiologyImages: (p as any).radiologyImages ?? null,
+        })),
+        (done, total) => setZipProgress({ done, total })
+      );
+      toast({
+        title: "ZIP downloaded",
+        description: `${downloaded} image${downloaded !== 1 ? "s" : ""} exported${skipped > 0 ? `, ${skipped} unavailable` : ""}.`,
+      });
+    } catch (err) {
+      toast({ title: "ZIP export failed", description: (err as Error).message, variant: "destructive" });
+    } finally {
+      setIsZipExporting(false);
+      setZipProgress(null);
+    }
+  }
 
   async function handleExcelExport() {
     if (exportTarget.length === 0) {
@@ -247,6 +286,24 @@ export default function Patients() {
                 ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 : <FileSpreadsheet className="mr-2 h-4 w-4 text-emerald-600" />}
               {isExporting ? "Exporting…" : selectedCount > 0 ? `Excel (${selectedCount})` : `Excel (${patients.length})`}
+            </Button>
+
+            <Button
+              variant="outline"
+              onClick={handleZipExport}
+              disabled={isZipExporting || isLoading || patients.length === 0}
+              title="Export radiology images as ZIP, one folder per patient ID"
+            >
+              {isZipExporting
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <ArchiveIcon className="mr-2 h-4 w-4 text-violet-600" />}
+              {isZipExporting
+                ? zipProgress && zipProgress.total > 0
+                  ? `${zipProgress.done}/${zipProgress.total} images…`
+                  : "Preparing…"
+                : selectedCount > 0
+                  ? `Images ZIP (${selectedCount})`
+                  : `Images ZIP (${patients.length})`}
             </Button>
 
             <Button
