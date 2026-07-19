@@ -1,6 +1,7 @@
 import { Router } from "express";
 import multer from "multer";
 import OpenAI, { toFile } from "openai";
+import express from "express";
 
 const router = Router();
 
@@ -98,6 +99,55 @@ router.post(
       const message = (err as Error).message ?? "Transcription failed";
       req.log.error({ err }, "Voice transcription error");
       res.status(500).json({ error: message });
+    }
+  }
+);
+
+// ── Text-only medical correction (used by live Web Speech API flow) ────────
+
+router.post(
+  "/voice/correct",
+  express.json(),
+  async (req, res): Promise<void> => {
+    const text = (req.body?.text ?? "").toString().trim();
+    if (!text) {
+      res.json({ corrected: "", corrections: [] });
+      return;
+    }
+
+    let openai: OpenAI;
+    try {
+      openai = getOpenAI();
+    } catch (err) {
+      res.status(503).json({ error: (err as Error).message });
+      return;
+    }
+
+    try {
+      const completion = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        response_format: { type: "json_object" },
+        max_tokens: 1024,
+        messages: [
+          { role: "system", content: MEDICAL_SYSTEM_PROMPT },
+          { role: "user",   content: text },
+        ],
+      });
+
+      let corrected   = text;
+      let corrections: Array<{ original: string; corrected: string; reason: string }> = [];
+
+      const raw = completion.choices[0]?.message?.content ?? "{}";
+      try {
+        const parsed = JSON.parse(raw);
+        corrected   = parsed.corrected   ?? text;
+        corrections = parsed.corrections ?? [];
+      } catch { /* keep raw text */ }
+
+      res.json({ corrected, corrections });
+    } catch (err) {
+      req.log.error({ err }, "Voice correction error");
+      res.status(500).json({ error: (err as Error).message ?? "Correction failed" });
     }
   }
 );
