@@ -3,13 +3,17 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Patient Research Data Collection API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: patients
+    description: Patient records operations
+  - name: Storage
+    description: Object storage upload and serving endpoints.
 paths:
   /healthz:
     get:
@@ -24,6 +28,244 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /patients:
+    get:
+      operationId: listPatients
+      tags: [patients]
+      summary: List all patients
+      description: Returns all patient records
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: sex
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: collectionType
+          in: query
+          schema:
+            type: ["string", "null"]
+        - name: limit
+          in: query
+          schema:
+            type: ["integer", "null"]
+        - name: offset
+          in: query
+          schema:
+            type: ["integer", "null"]
+      responses:
+        "200":
+          description: List of patients
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListPatientsResponse"
+
+    post:
+      operationId: createPatient
+      tags: [patients]
+      summary: Create a patient record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePatientBody"
+      responses:
+        "201":
+          description: Patient created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /patients/stats:
+    get:
+      operationId: getPatientStats
+      tags: [patients]
+      summary: Get patient statistics
+      description: Returns aggregated stats for dashboard
+      responses:
+        "200":
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientStats"
+
+  /patients/{id}:
+    get:
+      operationId: getPatient
+      tags: [patients]
+      summary: Get a single patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Patient record
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    patch:
+      operationId: updatePatient
+      tags: [patients]
+      summary: Update a patient record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePatientBody"
+      responses:
+        "200":
+          description: Updated patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+    delete:
+      operationId: deletePatient
+      tags: [patients]
+      summary: Delete a patient record
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /storage/uploads/request-url:
+    post:
+      tags: [Storage]
+      operationId: requestUploadUrl
+      summary: Request a presigned URL for file upload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UploadUrlRequest'
+      responses:
+        '200':
+          description: Presigned upload URL generated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadUrlResponse'
+        '400':
+          description: Missing or invalid required fields.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Failed to generate upload URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /storage/public-objects/{filePath}:
+    get:
+      tags: [Storage]
+      operationId: getPublicObject
+      summary: Serve a public asset
+      parameters:
+        - name: filePath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Object content.
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: File not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /storage/objects/{objectPath}:
+    get:
+      tags: [Storage]
+      operationId: getStorageObject
+      summary: Serve an uploaded object
+      parameters:
+        - name: objectPath
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Object content.
+          content:
+            '*/*':
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: Object not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +276,292 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    Patient:
+      type: object
+      properties:
+        id:
+          type: integer
+        collectionName:
+          type: ["string", "null"]
+        collectionDate:
+          type: ["string", "null"]
+        collectionType:
+          type: ["string", "null"]
+        patientId:
+          type: string
+        patientName:
+          type: string
+        age:
+          type: ["integer", "null"]
+        sex:
+          type: ["string", "null"]
+        dateOfVisit:
+          type: ["string", "null"]
+        chiefComplaint:
+          type: ["string", "null"]
+        vitalSigns:
+          type: ["string", "null"]
+        historyTrauma:
+          type: ["string", "null"]
+        mechanismOfInjuryAndLocalisation:
+          type: ["string", "null"]
+        signsAndSymptomsTrauma:
+          type: ["string", "null"]
+        historyMedical:
+          type: ["string", "null"]
+        signsAndSymptomsMedical:
+          type: ["string", "null"]
+        riskFactors:
+          type: ["string", "null"]
+        provisionalDiagnosis:
+          type: ["string", "null"]
+        radiologyImageFilePathOrLink:
+          type: ["string", "null"]
+        radiologyImages:
+          type: ["string", "null"]
+        emergencyReport:
+          type: ["string", "null"]
+        aiPredictionOutput:
+          type: ["string", "null"]
+        finalConfirmedDiagnosisAr:
+          type: ["string", "null"]
+        finalConfirmedDiagnosis:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - patientId
+        - patientName
+        - createdAt
+        - updatedAt
+
+    CreatePatientBody:
+      type: object
+      properties:
+        collectionName:
+          type: ["string", "null"]
+        collectionDate:
+          type: ["string", "null"]
+        collectionType:
+          type: ["string", "null"]
+        patientId:
+          type: string
+        patientName:
+          type: string
+        age:
+          type: ["integer", "null"]
+        sex:
+          type: ["string", "null"]
+        dateOfVisit:
+          type: ["string", "null"]
+        chiefComplaint:
+          type: ["string", "null"]
+        vitalSigns:
+          type: ["string", "null"]
+        historyTrauma:
+          type: ["string", "null"]
+        mechanismOfInjuryAndLocalisation:
+          type: ["string", "null"]
+        signsAndSymptomsTrauma:
+          type: ["string", "null"]
+        historyMedical:
+          type: ["string", "null"]
+        signsAndSymptomsMedical:
+          type: ["string", "null"]
+        riskFactors:
+          type: ["string", "null"]
+        provisionalDiagnosis:
+          type: ["string", "null"]
+        radiologyImageFilePathOrLink:
+          type: ["string", "null"]
+        radiologyImages:
+          type: ["string", "null"]
+        emergencyReport:
+          type: ["string", "null"]
+        aiPredictionOutput:
+          type: ["string", "null"]
+        finalConfirmedDiagnosisAr:
+          type: ["string", "null"]
+        finalConfirmedDiagnosis:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+      required:
+        - patientId
+        - patientName
+
+    UpdatePatientBody:
+      type: object
+      properties:
+        collectionName:
+          type: ["string", "null"]
+        collectionDate:
+          type: ["string", "null"]
+        collectionType:
+          type: ["string", "null"]
+        patientId:
+          type: ["string", "null"]
+        patientName:
+          type: ["string", "null"]
+        age:
+          type: ["integer", "null"]
+        sex:
+          type: ["string", "null"]
+        dateOfVisit:
+          type: ["string", "null"]
+        chiefComplaint:
+          type: ["string", "null"]
+        vitalSigns:
+          type: ["string", "null"]
+        historyTrauma:
+          type: ["string", "null"]
+        mechanismOfInjuryAndLocalisation:
+          type: ["string", "null"]
+        signsAndSymptomsTrauma:
+          type: ["string", "null"]
+        historyMedical:
+          type: ["string", "null"]
+        signsAndSymptomsMedical:
+          type: ["string", "null"]
+        riskFactors:
+          type: ["string", "null"]
+        provisionalDiagnosis:
+          type: ["string", "null"]
+        radiologyImageFilePathOrLink:
+          type: ["string", "null"]
+        radiologyImages:
+          type: ["string", "null"]
+        emergencyReport:
+          type: ["string", "null"]
+        aiPredictionOutput:
+          type: ["string", "null"]
+        finalConfirmedDiagnosisAr:
+          type: ["string", "null"]
+        finalConfirmedDiagnosis:
+          type: ["string", "null"]
+        notes:
+          type: ["string", "null"]
+
+    ListPatientsResponse:
+      type: object
+      properties:
+        patients:
+          type: array
+          items:
+            $ref: "#/components/schemas/Patient"
+        total:
+          type: integer
+      required:
+        - patients
+        - total
+
+    PatientStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        maleCount:
+          type: integer
+        femaleCount:
+          type: integer
+        recentCount:
+          type: integer
+        diagnosisCounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/DiagnosisCount"
+        ageBrackets:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgeBracket"
+        collectionTypeCounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/CollectionTypeCount"
+      required:
+        - total
+        - maleCount
+        - femaleCount
+        - recentCount
+        - diagnosisCounts
+        - ageBrackets
+        - collectionTypeCounts
+
+    DiagnosisCount:
+      type: object
+      properties:
+        diagnosis:
+          type: string
+        count:
+          type: integer
+      required:
+        - diagnosis
+        - count
+
+    AgeBracket:
+      type: object
+      properties:
+        bracket:
+          type: string
+        count:
+          type: integer
+      required:
+        - bracket
+        - count
+
+    CollectionTypeCount:
+      type: object
+      properties:
+        type:
+          type: string
+        count:
+          type: integer
+      required:
+        - type
+        - count
+
+    UploadUrlRequest:
+      type: object
+      required: [name, size, contentType]
+      properties:
+        name:
+          type: string
+          minLength: 1
+        size:
+          type: integer
+          minimum: 1
+        contentType:
+          type: string
+          minLength: 1
+
+    UploadUrlResponse:
+      type: object
+      required: [uploadURL, objectPath]
+      properties:
+        uploadURL:
+          type: string
+          format: uri
+        objectPath:
+          type: string
+        metadata:
+          $ref: '#/components/schemas/UploadUrlRequest'
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
