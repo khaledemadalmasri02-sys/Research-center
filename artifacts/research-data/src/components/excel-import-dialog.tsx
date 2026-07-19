@@ -4,13 +4,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CheckCircle2, XCircle, FileSpreadsheet, Loader2, Upload } from "lucide-react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { CheckCircle2, XCircle, FileSpreadsheet, Loader2, Upload, AlertTriangle } from "lucide-react";
 import { parseExcelFile, rowToPatient, FIELD_LABELS, type ParsedImport } from "@/lib/import-utils";
 
 type Props = {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onImport: (patients: Record<string, unknown>[]) => Promise<{ imported: number; failed: number }>;
+  onImport: (patients: Record<string, unknown>[]) => Promise<{ imported: number; failed: number; errors?: string[] }>;
 };
 
 type Phase = "idle" | "preview" | "importing" | "done";
@@ -21,7 +22,7 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
   const [parsed, setParsed] = useState<ParsedImport | null>(null);
   const [fileName, setFileName] = useState("");
   const [progress, setProgress] = useState(0);
-  const [result, setResult] = useState<{ imported: number; failed: number } | null>(null);
+  const [result, setResult] = useState<{ imported: number; failed: number; errors?: string[] } | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
 
   function reset() {
@@ -71,25 +72,31 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
     const patients = parsed.rows.map(rowToPatient);
     let done = 0;
     let failed = 0;
+    const errors: string[] = [];
 
-    // Import in small batches so the progress bar updates
     for (const patient of patients) {
       try {
         const res = await onImport([patient]);
         done += res.imported;
         failed += res.failed;
-      } catch {
+        if (res.errors) errors.push(...res.errors);
+      } catch (err) {
         failed++;
+        errors.push((err as Error).message || "Unknown error");
       }
       setProgress(Math.round(((done + failed) / patients.length) * 100));
     }
 
-    setResult({ imported: done, failed });
+    setResult({ imported: done, failed, errors });
     setPhase("done");
   }
 
   const mappedCols   = parsed?.columnMap.filter((c) => c.field) ?? [];
   const skippedCols  = parsed?.columnMap.filter((c) => !c.field) ?? [];
+  const mappedFields = new Set(mappedCols.map((c) => c.field));
+  const missingRequired = (["patientId", "patientName"] as const).filter(
+    (f) => !mappedFields.has(f)
+  );
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -117,10 +124,10 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
               <span className="text-xs">.xlsx or .xls</span>
             </button>
             {parseError && (
-              <p className="text-sm text-destructive flex items-start gap-2">
-                <XCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                {parseError}
-              </p>
+              <Alert variant="destructive">
+                <XCircle className="w-4 h-4" />
+                <AlertDescription>{parseError}</AlertDescription>
+              </Alert>
             )}
             <input
               ref={fileRef}
@@ -141,6 +148,20 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
               <span>·</span>
               <span>{parsed.rows.length} rows</span>
             </div>
+
+            {/* Missing required columns warning */}
+            {missingRequired.length > 0 && (
+              <Alert variant="destructive">
+                <AlertTriangle className="w-4 h-4" />
+                <AlertDescription>
+                  <strong>Required columns not found:</strong>{" "}
+                  {missingRequired.map((f) => FIELD_LABELS[f]).join(", ")}.
+                  These are required for every record — all rows will fail without them.
+                  Make sure your file has columns named{" "}
+                  {missingRequired.map((f) => `"${FIELD_LABELS[f]}"`).join(" and ")}.
+                </AlertDescription>
+              </Alert>
+            )}
 
             {/* Mapped columns */}
             <div>
@@ -214,19 +235,48 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
 
         {/* ── Done ── */}
         {phase === "done" && result && (
-          <div className="py-6 space-y-3">
+          <div className="py-4 space-y-3">
             <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-7 h-7 text-emerald-600 shrink-0" />
+              {result.imported > 0
+                ? <CheckCircle2 className="w-7 h-7 text-emerald-600 shrink-0" />
+                : <XCircle className="w-7 h-7 text-destructive shrink-0" />}
               <div>
                 <p className="font-semibold">Import complete</p>
                 <p className="text-sm text-muted-foreground">
                   {result.imported} record{result.imported !== 1 ? "s" : ""} imported successfully.
                   {result.failed > 0 && (
-                    <span className="text-destructive"> {result.failed} failed (duplicate ID or validation error).</span>
+                    <span className="text-destructive"> {result.failed} failed.</span>
                   )}
                 </p>
               </div>
             </div>
+
+            {/* Show error details when rows failed */}
+            {result.failed > 0 && result.errors && result.errors.length > 0 && (
+              <Alert variant="destructive">
+                <AlertTriangle className="w-4 h-4" />
+                <AlertDescription>
+                  <p className="font-medium mb-1">Failure reason{result.errors.length > 1 ? "s" : ""}:</p>
+                  <ScrollArea className="max-h-28">
+                    <ul className="text-xs space-y-0.5 list-disc list-inside">
+                      {/* Deduplicate errors */}
+                      {[...new Set(result.errors)].slice(0, 10).map((e, i) => (
+                        <li key={i}>{e}</li>
+                      ))}
+                      {result.errors.length > 10 && (
+                        <li>…and {result.errors.length - 10} more</li>
+                      )}
+                    </ul>
+                  </ScrollArea>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {result.failed > 0 && result.imported === 0 && (
+              <p className="text-xs text-muted-foreground">
+                Tip: Make sure your file has <strong>Patient ID</strong> and <strong>Patient Name</strong> columns — these are required for every record.
+              </p>
+            )}
           </div>
         )}
 
@@ -236,7 +286,11 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
           ) : phase === "preview" ? (
             <>
               <Button variant="outline" onClick={reset}>Back</Button>
-              <Button onClick={handleImport}>
+              <Button
+                onClick={handleImport}
+                disabled={missingRequired.length > 0}
+                title={missingRequired.length > 0 ? "Required columns are missing" : undefined}
+              >
                 Import {parsed!.rows.length} record{parsed!.rows.length !== 1 ? "s" : ""}
               </Button>
             </>
