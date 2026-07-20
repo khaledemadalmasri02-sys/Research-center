@@ -17,10 +17,31 @@ import { ExcelImportDialog } from "@/components/excel-import-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 
-function RadiologyThumb({ value }: { value: string | null | undefined }) {
-  const isStoredPath = value?.startsWith("/objects/");
-  const isExternalUrl = value && (value.startsWith("http://") || value.startsWith("https://"));
-  const src = isStoredPath ? `/api/storage${value}` : isExternalUrl ? value : null;
+function resolveFirstImageSrc(
+  radiologyImageFilePathOrLink: string | null | undefined,
+  radiologyImages: string | null | undefined,
+): string | null {
+  // Prefer the single-link field; fall back to first entry in the JSON array
+  const candidates: string[] = [];
+  if (radiologyImageFilePathOrLink) candidates.push(radiologyImageFilePathOrLink);
+  if (radiologyImages) {
+    try {
+      const arr = JSON.parse(radiologyImages);
+      if (Array.isArray(arr)) arr.forEach((p) => { if (p) candidates.push(String(p)); });
+    } catch {
+      // raw string path (not a JSON array) — use as-is
+      candidates.push(radiologyImages);
+    }
+  }
+  for (const v of candidates) {
+    if (v.startsWith("/objects/")) return `/api/storage${v}`;
+    if (v.startsWith("http://") || v.startsWith("https://")) return v;
+  }
+  return null;
+}
+
+function RadiologyThumb({ patient }: { patient: { radiologyImageFilePathOrLink?: string | null; radiologyImages?: string | null } }) {
+  const src = resolveFirstImageSrc(patient.radiologyImageFilePathOrLink, (patient as any).radiologyImages);
 
   if (!src) {
     return <span className="text-muted-foreground/40"><ImageOff className="w-5 h-5" /></span>;
@@ -258,6 +279,42 @@ export default function Patients() {
     toast({ title: "JSON exported", description: `${exportTarget.length} record(s) saved.` });
   }
 
+  function normalizeJsonRecord(rec: any): Record<string, unknown> {
+    const out = { ...rec };
+    // Strip DB-managed fields that the API must not receive
+    delete out.id;
+    delete out.createdAt;
+    delete out.updatedAt;
+
+    // radiologyImages: accept both a real array and a JSON-encoded string
+    if (Array.isArray(out.radiologyImages)) {
+      out.radiologyImages = JSON.stringify(out.radiologyImages);
+    } else if (out.radiologyImages && typeof out.radiologyImages !== "string") {
+      out.radiologyImages = String(out.radiologyImages);
+    }
+
+    // Sync single-link field from radiologyImages if absent
+    if (!out.radiologyImageFilePathOrLink && out.radiologyImages) {
+      try {
+        const paths = JSON.parse(out.radiologyImages as string);
+        if (Array.isArray(paths) && paths[0]) {
+          out.radiologyImageFilePathOrLink = String(paths[0]);
+        }
+      } catch {
+        // radiologyImages is a plain path string (not a JSON array)
+        out.radiologyImageFilePathOrLink = out.radiologyImages;
+      }
+    }
+
+    // Coerce age to number (may be a string in manually-created JSON)
+    if (typeof out.age === "string") {
+      const n = parseFloat(out.age as string);
+      out.age = !isNaN(n) ? Math.round(n) : null;
+    }
+
+    return out;
+  }
+
   async function handleJsonImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -266,28 +323,45 @@ export default function Patients() {
     setIsImporting(true);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        toast({ title: "Import failed", description: "The file is not valid JSON.", variant: "destructive" });
+        return;
+      }
       const records: any[] = Array.isArray(parsed) ? parsed : [parsed];
 
       let imported = 0;
       let failed = 0;
+      const errors: string[] = [];
+
       for (const rec of records) {
         try {
-          await createPatient.mutateAsync({ data: rec });
+          await createPatient.mutateAsync({ data: normalizeJsonRecord(rec) as any });
           imported++;
-        } catch {
+        } catch (err) {
           failed++;
+          errors.push((err as Error).message || "Unknown error");
         }
       }
 
       queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
-      toast({
-        title: "Import complete",
-        description: `${imported} imported${failed ? `, ${failed} failed` : ""}.`,
-        variant: failed > 0 ? "destructive" : "default",
-      });
-    } catch (err) {
-      toast({ title: "Import failed", description: "Invalid JSON file.", variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: getGetPatientStatsQueryKey() });
+
+      if (failed > 0 && imported === 0) {
+        toast({
+          title: "Import failed",
+          description: `All ${failed} record(s) failed. First error: ${[...new Set(errors)][0]}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Import complete",
+          description: `${imported} imported${failed ? `, ${failed} failed — ${[...new Set(errors)].slice(0, 2).join("; ")}` : ""}.`,
+          variant: failed > 0 ? "destructive" : "default",
+        });
+      }
     } finally {
       setIsImporting(false);
     }
@@ -512,7 +586,7 @@ export default function Patients() {
                       </TableCell>
                       <TableCell>
                         <Link href={`/patients/${patient.id}`}>
-                          <RadiologyThumb value={patient.radiologyImageFilePathOrLink} />
+                          <RadiologyThumb patient={patient as any} />
                         </Link>
                       </TableCell>
                       <TableCell className="font-medium">

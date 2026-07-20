@@ -27,6 +27,35 @@ function serializePatient<T extends { createdAt: Date | string; updatedAt: Date 
 const VALID_COLLECTION_TYPES = new Set(["Normal", "Abnormal", "Suspicious"]);
 const VALID_SEX              = new Set(["Male", "Female", "Other"]);
 
+/** Normalise the raw request body BEFORE Zod validation so that type
+ *  mismatches (e.g. radiologyImages sent as a real array) don't cause a 400. */
+function preprocess(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return {};
+  const out: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+
+  // radiologyImages: accept a real JSON array and convert to a JSON-encoded string
+  if (Array.isArray(out.radiologyImages)) {
+    out.radiologyImages = JSON.stringify(out.radiologyImages);
+  }
+
+  // Sync radiologyImageFilePathOrLink from radiologyImages if absent
+  if (!out.radiologyImageFilePathOrLink && out.radiologyImages && typeof out.radiologyImages === "string") {
+    try {
+      const paths = JSON.parse(out.radiologyImages);
+      if (Array.isArray(paths) && paths[0]) {
+        out.radiologyImageFilePathOrLink = String(paths[0]);
+      }
+    } catch {
+      // radiologyImages is a plain path string — treat it as the link too
+      if (!out.radiologyImageFilePathOrLink) {
+        out.radiologyImageFilePathOrLink = out.radiologyImages;
+      }
+    }
+  }
+
+  return out;
+}
+
 /** Coerce/sanitise patient data so type mismatches from Excel imports never
  *  reach the DB.  Any field that can't be coerced is dropped (set to null). */
 function sanitize(data: Record<string, unknown>): Record<string, unknown> {
@@ -106,7 +135,7 @@ router.get("/patients", async (req, res): Promise<void> => {
 });
 
 router.post("/patients", async (req, res): Promise<void> => {
-  const parsed = CreatePatientBody.safeParse(req.body);
+  const parsed = CreatePatientBody.safeParse(preprocess(req.body));
   if (!parsed.success) {
     req.log.warn({ errors: parsed.error.message }, "Invalid request body");
     res.status(400).json({ error: parsed.error.message });
@@ -213,7 +242,7 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const parsed = UpdatePatientBody.safeParse(req.body);
+  const parsed = UpdatePatientBody.safeParse(preprocess(req.body));
   if (!parsed.success) {
     req.log.warn({ errors: parsed.error.message }, "Invalid update body");
     res.status(400).json({ error: parsed.error.message });
