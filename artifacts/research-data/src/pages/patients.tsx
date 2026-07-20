@@ -199,15 +199,40 @@ export default function Patients() {
     let imported = 0;
     let failed = 0;
     const errors: string[] = [];
-    for (const rec of patients) {
+
+    const createOne = async (rec: Record<string, unknown>) => {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 12_000);
       try {
-        await createPatient.mutateAsync({ data: rec as any });
-        imported++;
+        const res = await fetch("/api/patients", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          signal: ctrl.signal,
+          body: JSON.stringify({ data: rec }),
+        });
+        clearTimeout(timer);
+        if (res.ok) {
+          imported++;
+        } else {
+          failed++;
+          const body = await res.json().catch(() => ({}));
+          errors.push(body.error ?? `HTTP ${res.status}`);
+        }
       } catch (err) {
+        clearTimeout(timer);
         failed++;
-        errors.push((err as Error).message || "Unknown error");
+        errors.push(
+          (err as Error).name === "AbortError"
+            ? "Timed out (>12 s)"
+            : (err as Error).message || "Network error"
+        );
       }
-    }
+    };
+
+    // Process all rows in the received slice concurrently
+    await Promise.all(patients.map(createOne));
+
     if (imported > 0) {
       queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
       queryClient.invalidateQueries({ queryKey: getGetPatientStatsQueryKey() });

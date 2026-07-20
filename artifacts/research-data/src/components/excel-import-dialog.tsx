@@ -70,21 +70,26 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
     setProgress(0);
 
     const patients = parsed.rows.map(rowToPatient);
+    const total = patients.length;
     let done = 0;
     let failed = 0;
     const errors: string[] = [];
 
-    for (const patient of patients) {
+    // Dispatch rows in parallel batches of 5 so progress never stalls
+    const BATCH = 5;
+    for (let i = 0; i < total; i += BATCH) {
+      const slice = patients.slice(i, i + BATCH);
       try {
-        const res = await onImport([patient]);
-        done += res.imported;
+        const res = await onImport(slice);
+        done   += res.imported;
         failed += res.failed;
         if (res.errors) errors.push(...res.errors);
       } catch (err) {
-        failed++;
+        failed += slice.length;
         errors.push((err as Error).message || "Unknown error");
       }
-      setProgress(Math.round(((done + failed) / patients.length) * 100));
+      // Always advance progress, even on error
+      setProgress(Math.round(((done + failed) / total) * 100));
     }
 
     setResult({ imported: done, failed, errors });
