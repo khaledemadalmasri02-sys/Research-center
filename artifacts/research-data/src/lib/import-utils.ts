@@ -120,8 +120,13 @@ const ALIASES: Array<[string[], ImportableField]> = [
      "finalconfirmeddiagnosisar","diagnosisinarabic"],                                  "finalConfirmedDiagnosisAr"],
   [["notes","note","comment","comments","remarks","additionalinfo","clinicalnotes"],    "notes"],
   [["radiologyimage","imagelink","imagelinkpath","radiologyimagefilepathlink",
-     "radiologyimagefilepathOrlink","imagepath","imageurl","radiologylink"],            "radiologyImageFilePathOrLink"],
-  [["imagepaths","allimagepaths","allimages","radiologyimages","imagefiles"],           "radiologyImages"],
+     "radiologyimagefilepathOrlink","imagepath","imageurl","radiologylink",
+     "photo","patientphoto","picture","img","imgurl","photourl","pictureurl",
+     "imageaddress","photopath","picturepath","xray","xrayimage","scanimage",
+     "ctimage","mriimage","medicalimage","medicalphoto"],                               "radiologyImageFilePathOrLink"],
+  [["imagepaths","allimagepaths","allimages","radiologyimages","imagefiles",
+     "photos","pictures","imageurls","photourls","allphotos","multiphotos",
+     "imagelist","photolist","xrays","scanimages"],                                    "radiologyImages"],
 ];
 
 // Normal vital reference defaults — used when a vital field is blank in the import
