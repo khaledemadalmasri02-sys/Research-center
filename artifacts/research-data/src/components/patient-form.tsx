@@ -260,7 +260,7 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
     patientName: initialData?.patientName || "",
     age: initialData?.age || null,
     sex: initialData?.sex || null,
-    dateOfVisit: initialData?.dateOfVisit ? new Date(initialData.dateOfVisit).toISOString().split('T')[0] : "",
+    dateOfVisit: (() => { try { const d = new Date(initialData?.dateOfVisit ?? ""); return !isNaN(d.getTime()) ? d.toISOString().split("T")[0] : ""; } catch { return ""; } })(),
     chiefComplaint: initialData?.chiefComplaint || "",
     vitalSigns: initialData?.vitalSigns || "",
     historyTrauma: initialData?.historyTrauma || "",

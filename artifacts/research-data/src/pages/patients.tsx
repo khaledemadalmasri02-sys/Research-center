@@ -499,15 +499,13 @@ export default function Patients() {
                       <TableCell>{patient.age ?? "-"}</TableCell>
                       <TableCell>{patient.sex ?? "-"}</TableCell>
                       <TableCell>
-                        {patient.dateOfVisit ? format(new Date(patient.dateOfVisit), "MMM d, yyyy") : "-"}
+                        {(() => { try { const d = new Date(patient.dateOfVisit ?? ""); return !isNaN(d.getTime()) ? format(d, "MMM d, yyyy") : (patient.dateOfVisit || "-"); } catch { return patient.dateOfVisit || "-"; } })()}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
                         {(patient as any).collectionName || "-"}
                       </TableCell>
                       <TableCell className="text-sm text-muted-foreground">
-                        {(patient as any).collectionDate
-                          ? format(new Date((patient as any).collectionDate), "MMM d, yyyy")
-                          : "-"}
+                        {(() => { try { const d = new Date((patient as any).collectionDate ?? ""); return (patient as any).collectionDate && !isNaN(d.getTime()) ? format(d, "MMM d, yyyy") : ((patient as any).collectionDate || "-"); } catch { return (patient as any).collectionDate || "-"; } })()}
                       </TableCell>
                       <TableCell className="max-w-[180px] truncate">
                         {patient.provisionalDiagnosis ?? "-"}

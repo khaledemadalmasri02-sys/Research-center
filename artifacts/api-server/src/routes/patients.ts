@@ -24,6 +24,46 @@ function serializePatient<T extends { createdAt: Date | string; updatedAt: Date 
   };
 }
 
+const VALID_COLLECTION_TYPES = new Set(["Normal", "Abnormal", "Suspicious"]);
+const VALID_SEX              = new Set(["Male", "Female", "Other"]);
+
+/** Coerce/sanitise patient data so type mismatches from Excel imports never
+ *  reach the DB.  Any field that can't be coerced is dropped (set to null). */
+function sanitize(data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+
+  // age must be a non-negative integer
+  if (out.age != null) {
+    const n = Number(out.age);
+    out.age = !isNaN(n) && n >= 0 ? Math.round(n) : null;
+  }
+
+  // collectionType must be one of the three enum values
+  if (out.collectionType != null && !VALID_COLLECTION_TYPES.has(out.collectionType as string)) {
+    out.collectionType = null;
+  }
+
+  // sex must be one of the three enum values
+  if (out.sex != null && !VALID_SEX.has(out.sex as string)) {
+    out.sex = null;
+  }
+
+  // date fields: store only valid ISO date strings; drop garbage
+  for (const f of ["collectionDate", "dateOfVisit"] as const) {
+    const v = out[f];
+    if (v != null && v !== "") {
+      try {
+        const d = new Date(v as string);
+        if (isNaN(d.getTime())) out[f] = null;
+      } catch {
+        out[f] = null;
+      }
+    }
+  }
+
+  return out;
+}
+
 router.get("/patients", async (req, res): Promise<void> => {
   const parsed = ListPatientsQueryParams.safeParse(req.query);
   if (!parsed.success) {
@@ -73,7 +113,7 @@ router.post("/patients", async (req, res): Promise<void> => {
     return;
   }
 
-  const [patient] = await db.insert(patientsTable).values(parsed.data).returning();
+  const [patient] = await db.insert(patientsTable).values(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data).returning();
 
   res.status(201).json(GetPatientResponse.parse(serializePatient(patient!)));
 });
@@ -180,10 +220,10 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Strip null values that Drizzle can't accept for non-nullable columns
+  // Sanitise type mismatches (e.g. float age from Excel) then strip nulls
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updateData: Record<string, any> = Object.fromEntries(
-    Object.entries(parsed.data).filter(([, v]) => v !== null)
+    Object.entries(sanitize(parsed.data as Record<string, unknown>)).filter(([, v]) => v !== null)
   );
 
   const [patient] = await db

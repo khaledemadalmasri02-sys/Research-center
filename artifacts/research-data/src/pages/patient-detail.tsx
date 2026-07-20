@@ -176,7 +176,7 @@ export default function PatientDetail() {
                 <h2 className="text-lg font-semibold border-b border-teal-200 pb-2 mb-4 text-teal-800">Collection Info</h2>
                 <div className="grid grid-cols-3 gap-4">
                   <Field label="Collection Name" value={(patient as any).collectionName} />
-                  <Field label="Date of Collection" value={(patient as any).collectionDate ? format(new Date((patient as any).collectionDate), "MMM d, yyyy") : null} />
+                  <Field label="Date of Collection" value={(() => { try { const d = new Date((patient as any).collectionDate ?? ""); return (patient as any).collectionDate && !isNaN(d.getTime()) ? format(d, "MMM d, yyyy") : ((patient as any).collectionDate || null); } catch { return (patient as any).collectionDate || null; } })()} />
                   {(patient as any).collectionType && (
                     <div className="mb-4">
                       <div className="text-sm font-medium text-muted-foreground">Type</div>
@@ -204,7 +204,7 @@ export default function PatientDetail() {
                 <Field label="Name" value={patient.patientName} />
                 <Field label="Age" value={patient.age} />
                 <Field label="Sex" value={patient.sex} />
-                <Field label="Date of Visit" value={patient.dateOfVisit ? format(new Date(patient.dateOfVisit), "MMM d, yyyy") : null} />
+                <Field label="Date of Visit" value={(() => { try { const d = new Date(patient.dateOfVisit ?? ""); return patient.dateOfVisit && !isNaN(d.getTime()) ? format(d, "MMM d, yyyy") : (patient.dateOfVisit || null); } catch { return patient.dateOfVisit || null; } })()} />
               </div>
             </div>
 
