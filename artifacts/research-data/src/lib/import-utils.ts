@@ -64,37 +64,64 @@ export const FIELD_LABELS: Record<ImportableField, string> = {
   radiologyImages:                  "Image Paths (multi-image)",
 };
 
-// Alternate header spellings (normalised: lowercase, stripped of non-alphanumeric)
+export const REQUIRED_FIELDS: ImportableField[] = ["patientId", "patientName"];
+
+// ── Alias table ──────────────────────────────────────────────────────────────
+// Keys are lowercase-alphanumeric (already normalised). Order matters: first match wins.
 const ALIASES: Array<[string[], ImportableField]> = [
-  [["collectionname","collection","studyname","studyset","dataset"],              "collectionName"],
-  [["dateofcollection","collectiondate","studydate"],                             "collectionDate"],
-  [["collectiontype","type","category"],                                          "collectionType"],
-  [["patientid","patid","pid","caseid","casenumber","case"],                      "patientId"],
-  [["patientname","name","fullname","patient"],                                   "patientName"],
-  [["age","patientage","ageyears"],                                               "age"],
-  [["sex","gender","patientgender","patientsex"],                                 "sex"],
-  [["dateofvisit","visitdate","admissiondate"],                                   "dateOfVisit"],
-  [["chiefcomplaint","complaint","presentingcomplaint","cc","maincomplaint"],     "chiefComplaint"],
-  [["vitalsigns","vitals","vs"],                                                  "vitalSigns"],
-  [["bp","bloodpressure","systolicdiastolic","bpmmhg"],                           "vitalBP"],
-  [["rr","respiratoryrate","breathsmin","resprate"],                              "vitalRR"],
-  [["temperature","temp","temperaturec"],                                          "vitalTemp"],
-  [["hr","heartrate","pulse","bpm"],                                              "vitalHR"],
-  [["o2sat","o2saturation","o2","spo2","oxygensaturation","oxygensat"],           "vitalO2"],
-  [["historytrauma","traumahistory","injuryhistory","trauma"],                    "historyTrauma"],
-  [["mechanismofinjury","mechanism","moi","injurymechanism","localization","mechanismofinjuryandlocalisation"], "mechanismOfInjuryAndLocalisation"],
-  [["signssymptomstrauma","signsandsymptomsoftrauma","symptomsoftrauma","traumasymptoms"], "signsAndSymptomsTrauma"],
-  [["historymedical","medicalhistory","pmhx","pastmedical"],                     "historyMedical"],
-  [["signssymptomsmedical","medicalsymptoms","signsandsymptomsmedical"],         "signsAndSymptomsMedical"],
-  [["riskfactors","risks","riskfactor"],                                          "riskFactors"],
-  [["provisionaldiagnosis","provisionaldx","workingdiagnosis","workingdx","impression","probablediagnosis"], "provisionalDiagnosis"],
-  [["emergencyreport","emergreport","erreport","report"],                         "emergencyReport"],
-  [["aiprediction","aipredictionoutput","ai","airesult","aidiagnosis"],           "aiPredictionOutput"],
-  [["finaldiagnosisen","finaldiagnosis","confirmeddiagnosis","diagnosis","dx","finalconfirmeddiagnosis"], "finalConfirmedDiagnosis"],
-  [["finaldiagnosisar","arabicdiagnosis","diagnosisarabic","finalardiagnosis","finalconfirmeddiagnosisar"], "finalConfirmedDiagnosisAr"],
-  [["notes","note","comment","comments","remarks"],                               "notes"],
-  [["radiologyimage","imagelink","imagelinkpath","radiologyimagefilepathlink","radiologyimagefilepathOrlink"], "radiologyImageFilePathOrLink"],
-  [["imagepaths","imagepath","allimagepaths","allimages","radiologyimages"],      "radiologyImages"],
+  // Collection
+  [["collectionname","collection","studyname","studyset","dataset","study","cohort"],    "collectionName"],
+  [["dateofcollection","collectiondate","studydate","colldate"],                         "collectionDate"],
+  [["collectiontype","colltype","type","category","studytype"],                          "collectionType"],
+
+  // Patient ID — broad net; many naming conventions
+  [["patientid","patid","pid","caseid","casenumber","case","id",
+     "no","num","number","serial","serialno","serialnumber","snumber",
+     "mrno","mrnumber","mrnum","mr","uhid","regid","regno","regnumber",
+     "registrationnumber","registrationno","hospitalid","hospitalnum",
+     "admissionid","admissionno","recordno","recordnumber","visitid",
+     "fileno","filenumber","chartno","chartnumber","casereferral",
+     "referralno","caseno"],                                                             "patientId"],
+
+  // Patient Name — broad net
+  [["patientname","name","fullname","patient","ptname","ptfullname",
+     "patname","clientname","subjectname","participantname",
+     "firstname","lastname","fullnameofpatient","nameofpatient",
+     "subject","participant"],                                                            "patientName"],
+
+  [["age","patientage","ageyears","ageatvisit","ageinyears"],                            "age"],
+  [["sex","gender","patientgender","patientsex","m/f"],                                  "sex"],
+  [["dateofvisit","visitdate","admissiondate","dateadmitted","admitdate","visitdt"],     "dateOfVisit"],
+  [["chiefcomplaint","complaint","presentingcomplaint","cc","maincomplaint",
+     "reasonforvisit","chiefpresentation","presenting"],                                 "chiefComplaint"],
+  [["vitalsigns","vitals","vs","vitalparameters","parameters"],                          "vitalSigns"],
+  [["bp","bloodpressure","systolicdiastolic","bpmmhg","systolicbp",
+     "diastolicbp","bloodpressuremmhg"],                                                 "vitalBP"],
+  [["rr","respiratoryrate","breathsmin","resprate","breathingrate"],                     "vitalRR"],
+  [["temperature","temp","temperaturec","bodytemp","bodytemperature","tempcelsius"],     "vitalTemp"],
+  [["hr","heartrate","pulse","bpm","pulserate","heartbpm"],                             "vitalHR"],
+  [["o2sat","o2saturation","o2","spo2","oxygensaturation","oxygensat",
+     "o2percent","spo2percent"],                                                         "vitalO2"],
+  [["historytrauma","traumahistory","injuryhistory","trauma","hxtrauma"],                "historyTrauma"],
+  [["mechanismofinjury","mechanism","moi","injurymechanism","localization",
+     "mechanismofinjuryandlocalisation","mechanismanddistribution"],                    "mechanismOfInjuryAndLocalisation"],
+  [["signssymptomstrauma","signsandsymptomsoftrauma","symptomsoftrauma",
+     "traumasymptoms","sxtrauma"],                                                       "signsAndSymptomsTrauma"],
+  [["historymedical","medicalhistory","pmhx","pastmedical","hxmedical","pmh"],          "historyMedical"],
+  [["signssymptomsmedical","medicalsymptoms","signsandsymptomsmedical","sxmedical"],    "signsAndSymptomsMedical"],
+  [["riskfactors","risks","riskfactor","comorbidities","comorbidity"],                  "riskFactors"],
+  [["provisionaldiagnosis","provisionaldx","workingdiagnosis","workingdx","impression",
+     "probablediagnosis","clinicalimpression","initialdx","initialdx"],                 "provisionalDiagnosis"],
+  [["emergencyreport","emergreport","erreport","report","emergencyassessment"],          "emergencyReport"],
+  [["aiprediction","aipredictionoutput","ai","airesult","aidiagnosis","mlresult"],      "aiPredictionOutput"],
+  [["finaldiagnosisen","finaldiagnosis","confirmeddiagnosis","diagnosis","dx",
+     "finalconfirmeddiagnosis","definitivediagnosis","confirmeddx"],                    "finalConfirmedDiagnosis"],
+  [["finaldiagnosisar","arabicdiagnosis","diagnosisarabic","finalardiagnosis",
+     "finalconfirmeddiagnosisar","diagnosisinarabic"],                                  "finalConfirmedDiagnosisAr"],
+  [["notes","note","comment","comments","remarks","additionalinfo","clinicalnotes"],    "notes"],
+  [["radiologyimage","imagelink","imagelinkpath","radiologyimagefilepathlink",
+     "radiologyimagefilepathOrlink","imagepath","imageurl","radiologylink"],            "radiologyImageFilePathOrLink"],
+  [["imagepaths","allimagepaths","allimages","radiologyimages","imagefiles"],           "radiologyImages"],
 ];
 
 // Normal vital reference defaults — used when a vital field is blank in the import
@@ -106,34 +133,49 @@ const VITAL_DEFAULTS: VitalFields = {
   O2:   "98",
 };
 
-function normalise(s: string): string {
+export function normalise(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 export function detectField(header: string): ImportableField | null {
   const n = normalise(header);
+  if (!n) return null;
+
+  // 1. Exact camelCase key match (e.g. "patientId" → "patientId")
   for (const key of Object.keys(FIELD_LABELS) as ImportableField[]) {
     if (normalise(key) === n) return key;
   }
+
+  // 2. Field label match (e.g. "Patient ID" → "patientId")
+  for (const [key, label] of Object.entries(FIELD_LABELS) as [ImportableField, string][]) {
+    if (normalise(label) === n) return key as ImportableField;
+  }
+
+  // 3. Alias match
   for (const [aliases, field] of ALIASES) {
     if (aliases.includes(n)) return field;
   }
+
   return null;
 }
 
 export type ColumnMap  = { header: string; field: ImportableField | null };
 export type ParsedImport = {
-  columnMap:      ColumnMap[];
-  rows:           Record<ImportableField, string>[];
+  /** Auto-detected column mapping (one entry per Excel column with a header) */
+  columnMap:  ColumnMap[];
+  /** Rows already mapped to ImportableField keys using the auto-detected map */
+  rows:       Record<ImportableField, string>[];
+  /** Raw rows keyed by ORIGINAL Excel header string (used for manual remapping) */
+  rawRows:    Record<string, string>[];
   skippedHeaders: string[];
+  /** Which row index (0-based) was chosen as the header row */
+  headerRowIndex: number;
 };
 
-// ── Date helpers ────────────────────────────────────────────────────────────
+// ── Date helpers ──────────────────────────────────────────────────────────────
 
-/** Convert an Excel date serial (e.g. 45306) to YYYY-MM-DD, or null. */
 function excelSerialToISO(serial: number): string | null {
   try {
-    // XLSX.SSF exposes parse_date_code in the library
     const ssf = (XLSX as any).SSF ?? (XLSX as any).utils?.SSF;
     if (ssf?.parse_date_code) {
       const p = ssf.parse_date_code(serial);
@@ -144,12 +186,10 @@ function excelSerialToISO(serial: number): string | null {
         return `${y}-${m}-${d}`;
       }
     }
-    // Fallback: manual Excel epoch math
-    // Excel epoch: Jan 0 1900 = day 0, but has a leap-year bug (day 60 = Feb 29 1900 which didn't exist)
-    const msPerDay = 86400000;
-    const excelEpoch = new Date(Date.UTC(1899, 11, 31)); // Dec 31 1899
-    const adjusted   = serial > 59 ? serial - 1 : serial; // skip the phantom Feb 29 1900
-    const date = new Date(excelEpoch.getTime() + adjusted * msPerDay);
+    // Manual epoch fallback
+    const excelEpoch = new Date(Date.UTC(1899, 11, 31));
+    const adjusted   = serial > 59 ? serial - 1 : serial;
+    const date = new Date(excelEpoch.getTime() + adjusted * 86400000);
     if (isNaN(date.getTime())) return null;
     return date.toISOString().slice(0, 10);
   } catch {
@@ -157,29 +197,22 @@ function excelSerialToISO(serial: number): string | null {
   }
 }
 
-/**
- * Parse any date-like string into a YYYY-MM-DD string.
- * Returns "" (not null) on failure so nothing downstream can throw.
- */
 export function parseDateValue(val: string): string {
   if (!val) return "";
   const trimmed = val.trim();
   if (!trimmed) return "";
 
-  // 1. Standard ISO / browser-parseable formats
   try {
     const d = new Date(trimmed);
     if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
   } catch { /* fall through */ }
 
-  // 2. Pure integer → Excel date serial
   const asNum = Number(trimmed);
   if (Number.isInteger(asNum) && asNum > 0 && asNum < 200000) {
     const iso = excelSerialToISO(asNum);
     if (iso) return iso;
   }
 
-  // 3. DD/MM/YYYY or D/M/YYYY (common in non-US Excel files)
   const dmy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})$/);
   if (dmy) {
     const [, dd, mm, yy] = dmy;
@@ -190,37 +223,43 @@ export function parseDateValue(val: string): string {
     } catch { /* fall through */ }
   }
 
-  // 4. Give up — return empty so rendering never crashes
   return "";
 }
 
-// ── Cell reader ─────────────────────────────────────────────────────────────
+// ── Cell reader ───────────────────────────────────────────────────────────────
 
 function cellToString(cell: XLSX.CellObject | undefined): string {
   if (!cell) return "";
   try {
     if (cell.t === "d") {
-      // cellDates:true branch (rarely hit with our options)
       const v = cell.v;
-      if (v instanceof Date && !isNaN(v.getTime())) {
-        return v.toISOString().slice(0, 10);
-      }
+      if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
     }
     if (cell.t === "n") {
-      // Prefer formatted string (cell.w) — XLSX populates this for date-format cells
       const w = String(cell.w ?? "").trim();
       if (w && w !== "Invalid Date" && !/^#+$/.test(w)) return w;
-      // Fallback: raw numeric value as string
       return String(cell.v ?? "").trim();
     }
-    const result = String(cell.w ?? cell.v ?? "").trim();
-    return result;
+    return String(cell.w ?? cell.v ?? "").trim();
   } catch {
     return "";
   }
 }
 
-// ── Parser ───────────────────────────────────────────────────────────────────
+// ── Parser ────────────────────────────────────────────────────────────────────
+
+/**
+ * Score a candidate header row: count how many cells map to a known ImportableField.
+ * Higher = more likely to be the real header row.
+ */
+function scoreRow(ws: XLSX.WorkSheet, rowIdx: number, cStart: number, cEnd: number): number {
+  let score = 0;
+  for (let c = cStart; c <= cEnd; c++) {
+    const val = cellToString(ws[XLSX.utils.encode_cell({ r: rowIdx, c })]);
+    if (val && detectField(val) !== null) score++;
+  }
+  return score;
+}
 
 export function parseExcelFile(file: File): Promise<ParsedImport> {
   return new Promise((resolve, reject) => {
@@ -234,35 +273,51 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
         if (!sheetName) throw new Error("Empty workbook");
         const ws = wb.Sheets[sheetName]!;
 
-        const range     = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
-        const headerRow = range.s.r;
+        const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
 
-        const columnMap: ColumnMap[] = [];
-        for (let c = range.s.c; c <= range.e.c; c++) {
-          const cellAddr = XLSX.utils.encode_cell({ r: headerRow, c });
-          const cellVal  = cellToString(ws[cellAddr]);
-          if (!cellVal) continue;
-          columnMap.push({ header: cellVal, field: detectField(cellVal) });
+        // ── Auto-detect header row: scan first 10 rows, pick best-scoring ──
+        const scanEnd = Math.min(range.s.r + 9, range.e.r);
+        let headerRowIndex = range.s.r;
+        let bestScore = -1;
+        for (let r = range.s.r; r <= scanEnd; r++) {
+          const s = scoreRow(ws, r, range.s.c, range.e.c);
+          if (s > bestScore) { bestScore = s; headerRowIndex = r; }
         }
 
-        const rows: Record<ImportableField, string>[] = [];
-        for (let r = headerRow + 1; r <= range.e.r; r++) {
-          const record   = {} as Record<ImportableField, string>;
-          let hasValue   = false;
+        // Build column map from the chosen header row
+        const columnMap: ColumnMap[] = [];
+        for (let c = range.s.c; c <= range.e.c; c++) {
+          const val = cellToString(ws[XLSX.utils.encode_cell({ r: headerRowIndex, c })]);
+          if (!val) continue;
+          columnMap.push({ header: val, field: detectField(val) });
+        }
+
+        // Build rows
+        const rows: Record<ImportableField, string>[]    = [];
+        const rawRows: Record<string, string>[]          = [];
+
+        for (let r = headerRowIndex + 1; r <= range.e.r; r++) {
+          const mapped   = {} as Record<ImportableField, string>;
+          const raw: Record<string, string> = {};
+          let hasValue = false;
+
           for (let ci = 0; ci < columnMap.length; ci++) {
             const col = columnMap[ci]!;
-            if (!col.field) continue;
-            const c       = range.s.c + ci;
-            const cellAddr = XLSX.utils.encode_cell({ r, c });
-            const val      = cellToString(ws[cellAddr]);
-            record[col.field] = val;
+            const c   = range.s.c + ci;
+            const val = cellToString(ws[XLSX.utils.encode_cell({ r, c })]);
+            raw[col.header] = val;
+            if (col.field) mapped[col.field] = val;
             if (val) hasValue = true;
           }
-          if (hasValue) rows.push(record);
+
+          if (hasValue) {
+            rows.push(mapped);
+            rawRows.push(raw);
+          }
         }
 
         const skippedHeaders = columnMap.filter((c) => !c.field).map((c) => c.header);
-        resolve({ columnMap, rows, skippedHeaders });
+        resolve({ columnMap, rows, rawRows, skippedHeaders, headerRowIndex });
       } catch (err) {
         reject(new Error((err as Error).message || "Failed to parse Excel file"));
       }
@@ -272,10 +327,29 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
   });
 }
 
+// ── Manual column mapping ─────────────────────────────────────────────────────
+
+/**
+ * Apply a user-edited column mapping to the raw rows.
+ * `mapping` keys are original Excel header strings; values are the field to map to (or null to skip).
+ */
+export function applyColumnMapping(
+  rawRows: Record<string, string>[],
+  mapping: Record<string, ImportableField | null>
+): Record<ImportableField, string>[] {
+  return rawRows.map((rawRow) => {
+    const result = {} as Record<ImportableField, string>;
+    for (const [header, field] of Object.entries(mapping)) {
+      if (!field) continue;
+      const val = rawRow[header] ?? "";
+      if (val || !(field in result)) result[field] = val;
+    }
+    return result;
+  });
+}
+
 // ── Row → Patient ─────────────────────────────────────────────────────────────
 
-/** Convert a raw string record to a CreatePatientBody-compatible object.
- *  All type mismatches are silently coerced — this function never throws. */
 export function rowToPatient(row: Record<ImportableField, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   const vitalParts: Partial<VitalFields> = {};
@@ -283,23 +357,19 @@ export function rowToPatient(row: Record<ImportableField, string>): Record<strin
   let hasCombinedVitals   = false;
 
   for (const [key, rawVal] of Object.entries(row) as [ImportableField, string][]) {
-    // Coerce to string; skip truly empty values
     const val = String(rawVal ?? "").trim();
 
-    // ── Individual vital fields ──────────────────────────────────────────
     if (key === "vitalBP")   { if (val) { vitalParts.BP   = val; hasIndividualVitals = true; } continue; }
     if (key === "vitalRR")   { if (val) { vitalParts.RR   = val; hasIndividualVitals = true; } continue; }
     if (key === "vitalTemp") { if (val) { vitalParts.Temp = val; hasIndividualVitals = true; } continue; }
     if (key === "vitalHR")   { if (val) { vitalParts.HR   = val; hasIndividualVitals = true; } continue; }
     if (key === "vitalO2")   { if (val) { vitalParts.O2   = val; hasIndividualVitals = true; } continue; }
 
-    // ── Combined vital signs (legacy single-field) ───────────────────────
     if (key === "vitalSigns") {
       if (val) { result["vitalSigns"] = val; hasCombinedVitals = true; }
       continue;
     }
 
-    // ── Radiology image paths ─────────────────────────────────────────────
     if (key === "radiologyImages") {
       if (!val) continue;
       let paths: string[] = [];
@@ -317,25 +387,20 @@ export function rowToPatient(row: Record<ImportableField, string>): Record<strin
       continue;
     }
 
-    // ── Age — coerce to number, ignore non-numeric ───────────────────────
     if (key === "age") {
       if (!val) continue;
       const n = parseFloat(val);
       if (!isNaN(n) && n >= 0) result[key] = Math.round(n);
-      // silently ignore non-numeric age values
       continue;
     }
 
-    // ── Date fields — safe parsing, never throws ─────────────────────────
     if (key === "collectionDate" || key === "dateOfVisit") {
       if (!val) continue;
       const iso = parseDateValue(val);
-      // Only store if we produced a valid ISO date; otherwise skip
       if (iso) result[key] = iso;
       continue;
     }
 
-    // ── Sex — normalise to enum values ───────────────────────────────────
     if (key === "sex") {
       if (!val) continue;
       const lower = val.toLowerCase();
@@ -345,24 +410,20 @@ export function rowToPatient(row: Record<ImportableField, string>): Record<strin
       continue;
     }
 
-    // ── Collection type — normalise to enum values ────────────────────────
     if (key === "collectionType") {
       if (!val) continue;
       const lower = val.toLowerCase();
       if (lower.startsWith("normal")) result[key] = "Normal";
       else if (lower.startsWith("abnormal")) result[key] = "Abnormal";
       else if (lower.startsWith("suspicious")) result[key] = "Suspicious";
-      else result[key] = val; // keep as-is, DB will reject if invalid
+      else result[key] = val;
       continue;
     }
 
-    // ── All other string fields ───────────────────────────────────────────
     if (val) result[key] = val;
   }
 
-  // ── Merge vitals ─────────────────────────────────────────────────────────
   if (hasIndividualVitals) {
-    // Fill any missing vital with the normal reference default
     result["vitalSigns"] = serializeVitals({
       BP:   vitalParts.BP   ?? VITAL_DEFAULTS.BP,
       RR:   vitalParts.RR   ?? VITAL_DEFAULTS.RR,
@@ -370,11 +431,6 @@ export function rowToPatient(row: Record<ImportableField, string>): Record<strin
       HR:   vitalParts.HR   ?? VITAL_DEFAULTS.HR,
       O2:   vitalParts.O2   ?? VITAL_DEFAULTS.O2,
     });
-  } else if (!hasCombinedVitals) {
-    // No vitals provided at all — leave vitalSigns empty (don't auto-fill)
-    // so the clinician can add real values. Uncomment the line below to
-    // always fill with defaults instead:
-    // result["vitalSigns"] = serializeVitals(VITAL_DEFAULTS);
   }
 
   return result;

@@ -209,7 +209,7 @@ export default function Patients() {
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           signal: ctrl.signal,
-          body: JSON.stringify({ data: rec }),
+          body: JSON.stringify(rec),
         });
         clearTimeout(timer);
         if (res.ok) {
