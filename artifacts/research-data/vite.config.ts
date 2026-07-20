@@ -30,7 +30,7 @@ if (!basePath) {
 export default defineConfig({
   base: basePath,
   plugins: [
-    nodePolyfills({ globals: { Buffer: true, process: true } }),
+    nodePolyfills({ globals: { Buffer: true, process: true }, protocolImports: false }),
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),
@@ -56,14 +56,36 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   root: path.resolve(import.meta.dirname),
+  optimizeDeps: {
+    include: [
+      "react",
+      "react-dom",
+      "react-dom/client",
+      "wouter",
+      "@tanstack/react-query",
+      "react-hook-form",
+      "@hookform/resolvers/zod",
+      "zod",
+      "lucide-react",
+      "date-fns",
+      "exceljs",
+      "jszip",
+      "xlsx",
+    ],
+    exclude: ["@replit/vite-plugin-cartographer", "@replit/vite-plugin-dev-banner"],
+  },
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
+    sourcemap: false,
   },
   server: {
     port,
     host: "0.0.0.0",
     allowedHosts: true,
+    warmup: {
+      clientFiles: ["./src/main.tsx", "./src/App.tsx", "./src/pages/*.tsx"],
+    },
     fs: {
       strict: true,
       deny: ["**/.*"],
