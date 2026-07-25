@@ -1,7 +1,7 @@
-import { useRef, useState, useCallback, useEffect } from "react";
+import { useRef, useState, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Mic, MicOff, Loader2, X, ArrowDown, RotateCcw } from "lucide-react";
+import { Mic, MicOff, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Web Speech API types ───────────────────────────────────────────────────
@@ -13,38 +13,60 @@ declare global {
   }
 }
 
+// ── Language options ───────────────────────────────────────────────────────
+
+type LangOption = { code: string; label: string; short: string };
+
+const LANG_OPTIONS: LangOption[] = [
+  { code: "en-US", label: "English",        short: "EN" },
+  { code: "ar-SA", label: "Arabic (SA)",    short: "AR" },
+  { code: "ar-EG", label: "Arabic (EG)",    short: "AR-EG" },
+];
+
 // ── Types ──────────────────────────────────────────────────────────────────
 
 type Correction = { original: string; corrected: string; reason: string };
-type CorrectionResult = { corrected: string; corrections: Correction[] };
-
 type Phase =
   | "idle"
-  | "listening"          // live — text streaming into field
-  | "correcting"         // GPT medical-correction pass running
-  | "done";              // result ready, show badge strip
+  | "listening"
+  | "correcting"
+  | "done";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-function getSpeechRecognition(): SpeechRecognition | null {
+function getSpeechRecognition(lang: string): SpeechRecognition | null {
   const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
   if (!SR) return null;
   const r = new SR();
   r.continuous      = true;
   r.interimResults  = true;
-  r.lang            = "en-US";
-  r.maxAlternatives = 1;
+  r.lang            = lang;
+  r.maxAlternatives = 3;      // give browser more candidates to pick from
   return r;
 }
 
-async function correctText(text: string): Promise<CorrectionResult> {
+/** Pick the highest-confidence alternative from a SpeechRecognitionResult. */
+function bestTranscript(result: SpeechRecognitionResult): string {
+  let best = "";
+  let bestConf = -1;
+  for (let i = 0; i < result.length; i++) {
+    const alt = result[i]!;
+    if (alt.confidence > bestConf) {
+      bestConf = alt.confidence;
+      best     = alt.transcript;
+    }
+  }
+  return best || result[0]!.transcript;
+}
+
+async function correctText(text: string): Promise<{ corrected: string; corrections: Correction[] }> {
   const res = await fetch("/api/voice/correct", {
-    method: "POST",
+    method:  "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ text }),
   });
-  if (!res.ok) throw new Error(`Correction failed (${res.status})`);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
 
@@ -56,83 +78,95 @@ interface Props extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 export function VoiceDictationTextarea({ value, onChange, className, ...rest }: Props) {
-  const [phase,        setPhase]        = useState<Phase>("idle");
-  const [interim,      setInterim]      = useState("");          // live partial sentence
-  const [corrections,  setCorrections]  = useState<Correction[]>([]);
-  const [error,        setError]        = useState<string | null>(null);
+  const [phase,       setPhase]       = useState<Phase>("idle");
+  const [interim,     setInterim]     = useState("");
+  const [corrections, setCorrections] = useState<Correction[]>([]);
+  const [error,       setError]       = useState<string | null>(null);
+  const [lang,        setLang]        = useState<string>("en-US");
 
-  // Track the field value at the moment recording started so we can
-  // accurately append the dictated block without drift.
+  // Snapshot of the field value the moment recording started
   const baseRef      = useRef("");
-  // Accumulate finalised speech segments during this recording session.
+  // Finalised segments accumulated during this session
   const finalRef     = useRef("");
   const recRef       = useRef<SpeechRecognition | null>(null);
   const stopCalledRef = useRef(false);
 
-  // Emit value changes through onChange so react-hook-form stays in sync
   const emit = useCallback((next: string) => {
     onChange({ target: { value: next } } as React.ChangeEvent<HTMLTextAreaElement>);
   }, [onChange]);
 
+  // Build the live preview text shown in the field
+  const liveValue = useCallback((interimText: string) => {
+    const base     = baseRef.current;
+    const finalized = finalRef.current;
+    const parts: string[] = [];
+    if (base)      parts.push(base);
+    if (finalized) parts.push(finalized);
+    if (interimText) parts.push(interimText);
+    return parts.join(" ");
+  }, []);
+
   // ── Start listening ──────────────────────────────────────────────────────
   const start = useCallback(() => {
     setError(null);
-    const rec = getSpeechRecognition();
+    setCorrections([]);
+
+    const rec = getSpeechRecognition(lang);
     if (!rec) {
-      setError("Your browser doesn't support live speech recognition. Try Chrome or Edge.");
+      setError("Your browser doesn't support speech recognition. Try Chrome or Edge.");
       return;
     }
 
-    baseRef.current   = value;
-    finalRef.current  = "";
+    baseRef.current       = value.trimEnd();
+    finalRef.current      = "";
     stopCalledRef.current = false;
-    recRef.current = rec;
+    recRef.current        = rec;
 
     rec.onresult = (event) => {
-      let interim_ = "";
-      let newFinal = "";
+      // Process only newly arrived results (from resultIndex onward)
+      let newFinal  = "";
+      let newInterim = "";
 
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i]![0]!.transcript;
-        if (event.results[i]!.isFinal) {
-          newFinal += t;
+        const result = event.results[i]!;
+        const text   = bestTranscript(result).trim();
+        if (result.isFinal) {
+          newFinal += (newFinal ? " " : "") + text;
         } else {
-          interim_ = t;
+          newInterim = text; // interim is always the last/only non-final
         }
       }
 
       if (newFinal) {
-        // Add a space separator when appending after existing text
-        const sep = finalRef.current || baseRef.current ? " " : "";
-        finalRef.current += sep + newFinal.trim();
+        finalRef.current  = finalRef.current
+          ? finalRef.current + " " + newFinal
+          : newFinal;
         setInterim("");
-      } else {
-        setInterim(interim_);
+        emit(liveValue(""));
+      } else if (newInterim) {
+        setInterim(newInterim);
+        emit(liveValue(newInterim));
       }
-
-      // Live-update the field: base + final + interim preview
-      const preview = finalRef.current
-        ? (interim_ ? `${finalRef.current} ${interim_}` : finalRef.current)
-        : interim_;
-      const sep = baseRef.current && preview ? " " : "";
-      emit(baseRef.current + sep + preview);
     };
 
     rec.onerror = (event) => {
-      if (event.error === "no-speech") return; // ignore silence
-      if (event.error === "aborted")   return; // we stopped it
+      if (event.error === "no-speech") return;   // silence — keep waiting
+      if (event.error === "aborted")   return;   // we triggered this
       setError(`Microphone error: ${event.error}`);
-      cleanup();
+      recRef.current = null;
+      setPhase("idle");
+      setInterim("");
     };
 
     rec.onend = () => {
-      // If the recognition ended on its own (e.g. silence timeout) and the
-      // user hasn't explicitly stopped, restart to keep it continuous.
+      // Auto-restart on silence timeout unless the user explicitly stopped
       if (!stopCalledRef.current && recRef.current === rec) {
-        try { rec.start(); } catch { /* ignore */ }
+        try { rec.start(); } catch { /* ignore race */ }
         return;
       }
-      cleanup();
+      recRef.current = null;
+      setInterim("");
+      setPhase("idle");
     };
 
     try {
@@ -141,42 +175,36 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
     } catch {
       setError("Could not start microphone. Check browser permissions.");
     }
-  }, [value, emit]);
+  }, [value, emit, lang, liveValue]);
 
-  // ── Stop + correct ───────────────────────────────────────────────────────
+  // ── Stop + optional AI correction ────────────────────────────────────────
   const stop = useCallback(async () => {
     stopCalledRef.current = true;
     recRef.current?.stop();
     recRef.current = null;
     setInterim("");
 
-    // The final field value at this point is already updated via onresult.
-    // Run the medical correction pass on just the dictated block.
     const dictated = finalRef.current.trim();
     if (!dictated) {
       setPhase("idle");
       return;
     }
 
+    // Commit what we have immediately so the user isn't waiting with a blank field
+    emit(liveValue(""));
+
     setPhase("correcting");
     try {
       const { corrected, corrections } = await correctText(dictated);
-      // Replace the dictated block with the corrected version
-      const sep = baseRef.current && corrected ? " " : "";
-      emit(baseRef.current + sep + corrected);
+      const base = baseRef.current;
+      emit((base ? base + " " : "") + corrected);
       setCorrections(corrections);
       setPhase(corrections.length > 0 ? "done" : "idle");
     } catch {
-      // Correction failed – keep the raw transcription, don't block the user
+      // Correction unavailable (no API key or network error) — keep raw text
       setPhase("idle");
     }
-  }, [emit]);
-
-  function cleanup() {
-    recRef.current = null;
-    setPhase("idle");
-    setInterim("");
-  }
+  }, [emit, liveValue]);
 
   function dismiss() {
     stopCalledRef.current = true;
@@ -188,7 +216,6 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
     setError(null);
   }
 
-  // Dismiss corrections panel when the field is edited manually
   const handleChange: React.ChangeEventHandler<HTMLTextAreaElement> = (e) => {
     if (phase === "done") setPhase("idle");
     onChange(e);
@@ -200,7 +227,31 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
 
   return (
     <div className="space-y-1.5">
-      {/* Textarea row */}
+
+      {/* Language selector — shown only when idle */}
+      {!isListening && !isCorrecting && (
+        <div className="flex items-center gap-1">
+          {LANG_OPTIONS.map((opt) => (
+            <button
+              key={opt.code}
+              type="button"
+              onClick={() => setLang(opt.code)}
+              title={opt.label}
+              className={cn(
+                "text-xs px-2 py-0.5 rounded border transition-colors",
+                lang === opt.code
+                  ? "bg-teal-600 text-white border-teal-600 font-semibold"
+                  : "bg-muted text-muted-foreground border-border hover:border-teal-400 hover:text-teal-700"
+              )}
+            >
+              {opt.short}
+            </button>
+          ))}
+          <span className="text-xs text-muted-foreground ml-1">recognition language</span>
+        </div>
+      )}
+
+      {/* Textarea + mic button */}
       <div className="relative group">
         <Textarea
           {...rest}
@@ -214,12 +265,11 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
           )}
         />
 
-        {/* Mic button */}
         <button
           type="button"
           disabled={isCorrecting}
           onClick={isListening ? stop : start}
-          title={isListening ? "Stop — run medical correction" : "Start live voice dictation"}
+          title={isListening ? "Stop recording" : `Start voice dictation (${LANG_OPTIONS.find(o => o.code === lang)?.label ?? lang})`}
           className={cn(
             "absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center",
             "transition-all shadow-sm opacity-50 group-hover:opacity-100 focus:opacity-100",
@@ -243,7 +293,10 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
         <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-md text-xs text-red-600 select-none">
           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
           <span className="flex-1">
-            Listening…
+            Listening
+            <span className="ml-1 font-medium text-red-500">
+              [{LANG_OPTIONS.find(o => o.code === lang)?.short ?? lang}]
+            </span>
             {interim && <span className="text-red-400 italic ml-1">"{interim}"</span>}
           </span>
           <span className="text-red-400">Click mic to stop</span>
