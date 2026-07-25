@@ -51,7 +51,7 @@ const ABBREVIATIONS: Record<string, string> = {
   "vf":    "ventricular fibrillation",
   "svt":   "supraventricular tachycardia",
   "dvt":   "deep vein thrombosis",
-  "pe":    "pulmonary embolism",
+  "pe":    "pulmonary embolism / physical examination",
   "uti":   "urinary tract infection",
   "urti":  "upper respiratory tract infection",
   "lrti":  "lower respiratory tract infection",
@@ -80,9 +80,8 @@ const ABBREVIATIONS: Record<string, string> = {
   "n&v":   "nausea and vomiting",
   "nv":    "nausea and vomiting",
   "abd":   "abdominal",
-  "loc":   "loss of consciousness",
-  "aloc":  "altered level of consciousness",
   "loc":   "level of consciousness",
+  "aloc":  "altered level of consciousness",
 
   // Labs
   "cbc":   "complete blood count",
@@ -153,7 +152,6 @@ const ABBREVIATIONS: Record<string, string> = {
   "sq":    "subcutaneously",
   "sl":    "sublingually",
   "npo":   "nothing by mouth",
-  "prn":   "as needed",
 
   // Clinical context
   "hx":    "history",
@@ -162,7 +160,7 @@ const ABBREVIATIONS: Record<string, string> = {
   "fh":    "family history",
   "sh":    "social history",
   "ros":   "review of systems",
-  "pe":    "physical examination",
+  "phys-exam": "physical examination",
   "cc":    "chief complaint",
   "hpi":   "history of present illness",
   "a&p":   "assessment and plan",
@@ -186,7 +184,6 @@ const ABBREVIATIONS: Record<string, string> = {
   "y/o":   "year old",
   "m":     "male",
   "f":     "female",
-  "yo":    "year old",
 };
 
 // ─── 2. Phonetic / mishearing corrections ─────────────────────────────────────

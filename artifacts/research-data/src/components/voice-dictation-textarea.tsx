@@ -1,61 +1,58 @@
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { Textarea } from "@/components/ui/textarea";
-import { Mic, MicOff, X } from "lucide-react";
+import { Mic, Square, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { correctMedicalText, type Correction } from "@/lib/medical-correction";
 
-// ── Web Speech API types ───────────────────────────────────────────────────
+// ── Language options ───────────────────────────────────────────────────────────
+// Groq Whisper auto-detects language — these are ISO-639-1 hints sent as a param.
 
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof SpeechRecognition;
-  }
-}
-
-// ── Language options ───────────────────────────────────────────────────────
-
-type LangOption = { code: string; label: string; short: string };
+type LangOption = { code: string; whisper: string; label: string; short: string };
 
 const LANG_OPTIONS: LangOption[] = [
-  { code: "en-US", label: "English",        short: "EN" },
-  { code: "ar-SA", label: "Arabic (SA)",    short: "AR" },
-  { code: "ar-EG", label: "Arabic (EG)",    short: "AR-EG" },
+  { code: "auto", whisper: "",    label: "Auto-detect", short: "AUTO" },
+  { code: "en",   whisper: "en",  label: "English",     short: "EN"   },
+  { code: "ar",   whisper: "ar",  label: "Arabic",      short: "AR"   },
+  { code: "fr",   whisper: "fr",  label: "French",      short: "FR"   },
+  { code: "de",   whisper: "de",  label: "German",      short: "DE"   },
+  { code: "es",   whisper: "es",  label: "Spanish",     short: "ES"   },
 ];
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ── Types ──────────────────────────────────────────────────────────────────────
 
-type Phase = "idle" | "listening" | "done";
+type Phase = "idle" | "recording" | "transcribing" | "done";
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// ── Recording timer ────────────────────────────────────────────────────────────
 
-function getSpeechRecognition(lang: string): SpeechRecognition | null {
-  const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
-  if (!SR) return null;
-  const r = new SR();
-  r.continuous      = true;
-  r.interimResults  = true;
-  r.lang            = lang;
-  r.maxAlternatives = 3;      // give browser more candidates to pick from
-  return r;
+function useTimer(running: boolean) {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    if (!running) { setSeconds(0); return; }
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [running]);
+  const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
 }
 
-/** Pick the highest-confidence alternative from a SpeechRecognitionResult. */
-function bestTranscript(result: SpeechRecognitionResult): string {
-  let best = "";
-  let bestConf = -1;
-  for (let i = 0; i < result.length; i++) {
-    const alt = result[i]!;
-    if (alt.confidence > bestConf) {
-      bestConf = alt.confidence;
-      best     = alt.transcript;
-    }
+// ── Helpers ────────────────────────────────────────────────────────────────────
+
+function getBestMimeType(): string {
+  const types = [
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/ogg;codecs=opus",
+    "audio/ogg",
+    "audio/mp4",
+  ];
+  for (const t of types) {
+    if (MediaRecorder.isTypeSupported(t)) return t;
   }
-  return best || result[0]!.transcript;
+  return "";
 }
 
-
-// ── Component ──────────────────────────────────────────────────────────────
+// ── Component ──────────────────────────────────────────────────────────────────
 
 interface Props extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
   value:    string;
@@ -64,131 +61,115 @@ interface Props extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
 
 export function VoiceDictationTextarea({ value, onChange, className, ...rest }: Props) {
   const [phase,       setPhase]       = useState<Phase>("idle");
-  const [interim,     setInterim]     = useState("");
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [error,       setError]       = useState<string | null>(null);
-  const [lang,        setLang]        = useState<string>("en-US");
+  const [lang,        setLang]        = useState<LangOption>(LANG_OPTIONS[0]!);
 
-  // Snapshot of the field value the moment recording started
-  const baseRef      = useRef("");
-  // Finalised segments accumulated during this session
-  const finalRef     = useRef("");
-  const recRef       = useRef<SpeechRecognition | null>(null);
-  const stopCalledRef = useRef(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef   = useRef<Blob[]>([]);
+  const baseRef     = useRef("");           // field value when recording started
+  const mimeRef     = useRef("");
+
+  const timer = useTimer(phase === "recording");
 
   const emit = useCallback((next: string) => {
     onChange({ target: { value: next } } as React.ChangeEvent<HTMLTextAreaElement>);
   }, [onChange]);
 
-  // Build the live preview text shown in the field
-  const liveValue = useCallback((interimText: string) => {
-    const base     = baseRef.current;
-    const finalized = finalRef.current;
-    const parts: string[] = [];
-    if (base)      parts.push(base);
-    if (finalized) parts.push(finalized);
-    if (interimText) parts.push(interimText);
-    return parts.join(" ");
-  }, []);
-
-  // ── Start listening ──────────────────────────────────────────────────────
-  const start = useCallback(() => {
+  // ── Start recording ──────────────────────────────────────────────────────────
+  const start = useCallback(async () => {
     setError(null);
     setCorrections([]);
 
-    const rec = getSpeechRecognition(lang);
-    if (!rec) {
-      setError("Your browser doesn't support speech recognition. Try Chrome or Edge.");
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      const msg = (err as Error).name === "NotAllowedError"
+        ? "Microphone access denied. Allow microphone in your browser settings."
+        : `Microphone error: ${(err as Error).message}`;
+      setError(msg);
       return;
     }
 
-    baseRef.current       = value.trimEnd();
-    finalRef.current      = "";
-    stopCalledRef.current = false;
-    recRef.current        = rec;
+    const mime = getBestMimeType();
+    mimeRef.current   = mime;
+    chunksRef.current = [];
+    baseRef.current   = value.trimEnd();
 
-    rec.onresult = (event) => {
-      // Process only newly arrived results (from resultIndex onward)
-      let newFinal  = "";
-      let newInterim = "";
+    const recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recorderRef.current = recorder;
 
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const result = event.results[i]!;
-        const text   = bestTranscript(result).trim();
-        if (result.isFinal) {
-          newFinal += (newFinal ? " " : "") + text;
-        } else {
-          newInterim = text; // interim is always the last/only non-final
-        }
-      }
-
-      if (newFinal) {
-        finalRef.current  = finalRef.current
-          ? finalRef.current + " " + newFinal
-          : newFinal;
-        setInterim("");
-        emit(liveValue(""));
-      } else if (newInterim) {
-        setInterim(newInterim);
-        emit(liveValue(newInterim));
-      }
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunksRef.current.push(e.data);
     };
 
-    rec.onerror = (event) => {
-      if (event.error === "no-speech") return;   // silence — keep waiting
-      if (event.error === "aborted")   return;   // we triggered this
-      setError(`Microphone error: ${event.error}`);
-      recRef.current = null;
-      setPhase("idle");
-      setInterim("");
-    };
+    recorder.onstop = async () => {
+      // Stop all tracks so the mic indicator disappears
+      stream.getTracks().forEach((t) => t.stop());
 
-    rec.onend = () => {
-      // Auto-restart on silence timeout unless the user explicitly stopped
-      if (!stopCalledRef.current && recRef.current === rec) {
-        try { rec.start(); } catch { /* ignore race */ }
+      const blob = new Blob(chunksRef.current, { type: mimeRef.current || "audio/webm" });
+      chunksRef.current = [];
+
+      if (blob.size < 1000) {
+        // Too short — nothing recorded
+        setPhase("idle");
         return;
       }
-      recRef.current = null;
-      setInterim("");
-      setPhase("idle");
+
+      setPhase("transcribing");
+      try {
+        const fd = new FormData();
+        fd.append("audio", blob, "recording" + (mimeRef.current.includes("ogg") ? ".ogg" : mimeRef.current.includes("mp4") ? ".mp4" : ".webm"));
+
+        const url = lang.whisper
+          ? `/api/voice/transcribe?lang=${lang.whisper}`
+          : "/api/voice/transcribe";
+
+        const res = await fetch(url, {
+          method:      "POST",
+          credentials: "include",
+          body:        fd,
+        });
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
+
+        const { transcript } = await res.json() as { transcript: string };
+
+        if (!transcript.trim()) {
+          setPhase("idle");
+          return;
+        }
+
+        // Apply local medical correction — instant, no API cost
+        const { corrected, corrections: fixes } = correctMedicalText(transcript);
+        const base = baseRef.current;
+        emit((base ? base + " " : "") + corrected);
+        setCorrections(fixes);
+        setPhase(fixes.length > 0 ? "done" : "idle");
+      } catch (err) {
+        setError(`Transcription failed: ${(err as Error).message}`);
+        setPhase("idle");
+      }
     };
 
-    try {
-      rec.start();
-      setPhase("listening");
-    } catch {
-      setError("Could not start microphone. Check browser permissions.");
-    }
-  }, [value, emit, lang, liveValue]);
+    recorder.start(250); // collect chunks every 250 ms
+    setPhase("recording");
+  }, [value, emit, lang]);
 
-  // ── Stop + local medical correction (instant, no API call) ──────────────
+  // ── Stop recording ────────────────────────────────────────────────────────────
   const stop = useCallback(() => {
-    stopCalledRef.current = true;
-    recRef.current?.stop();
-    recRef.current = null;
-    setInterim("");
-
-    const dictated = finalRef.current.trim();
-    if (!dictated) {
-      setPhase("idle");
-      return;
-    }
-
-    // Apply local medical correction — runs synchronously, zero cost
-    const { corrected, corrections } = correctMedicalText(dictated);
-    const base = baseRef.current;
-    emit((base ? base + " " : "") + corrected);
-    setCorrections(corrections);
-    setPhase(corrections.length > 0 ? "done" : "idle");
-  }, [emit]);
+    recorderRef.current?.stop();
+    recorderRef.current = null;
+  }, []);
 
   function dismiss() {
-    stopCalledRef.current = true;
-    recRef.current?.stop();
-    recRef.current = null;
+    recorderRef.current?.stop();
+    recorderRef.current = null;
     setPhase("idle");
-    setInterim("");
     setCorrections([]);
     setError(null);
   }
@@ -198,24 +179,26 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
     onChange(e);
   };
 
-  const isListening = phase === "listening";
-  const isDone      = phase === "done";
+  const isRecording    = phase === "recording";
+  const isTranscribing = phase === "transcribing";
+  const isDone         = phase === "done";
+  const busy           = isRecording || isTranscribing;
 
   return (
     <div className="space-y-1.5">
 
-      {/* Language selector — shown only when idle */}
-      {!isListening && (
-        <div className="flex items-center gap-1">
+      {/* Language selector — hidden while busy */}
+      {!busy && (
+        <div className="flex items-center gap-1 flex-wrap">
           {LANG_OPTIONS.map((opt) => (
             <button
               key={opt.code}
               type="button"
-              onClick={() => setLang(opt.code)}
+              onClick={() => setLang(opt)}
               title={opt.label}
               className={cn(
                 "text-xs px-2 py-0.5 rounded border transition-colors",
-                lang === opt.code
+                lang.code === opt.code
                   ? "bg-teal-600 text-white border-teal-600 font-semibold"
                   : "bg-muted text-muted-foreground border-border hover:border-teal-400 hover:text-teal-700"
               )}
@@ -223,11 +206,11 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
               {opt.short}
             </button>
           ))}
-          <span className="text-xs text-muted-foreground ml-1">recognition language</span>
+          <span className="text-xs text-muted-foreground ml-1">language</span>
         </div>
       )}
 
-      {/* Textarea + mic button */}
+      {/* Textarea + mic / stop button */}
       <div className="relative group">
         <Textarea
           {...rest}
@@ -235,41 +218,55 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
           onChange={handleChange}
           className={cn(
             "pr-10 min-h-[80px] transition-all resize-y",
-            isListening && "ring-2 ring-red-400 border-red-300",
+            isRecording    && "ring-2 ring-red-400 border-red-300",
+            isTranscribing && "ring-2 ring-amber-300 border-amber-200",
             className
           )}
         />
 
         <button
           type="button"
-          onClick={isListening ? stop : start}
-          title={isListening ? "Stop recording" : `Start voice dictation (${LANG_OPTIONS.find(o => o.code === lang)?.label ?? lang})`}
+          disabled={isTranscribing}
+          onClick={isRecording ? stop : start}
+          title={
+            isRecording    ? "Stop recording" :
+            isTranscribing ? "Transcribing…"  :
+            `Start voice dictation (${lang.label})`
+          }
           className={cn(
             "absolute top-2 right-2 w-7 h-7 rounded-full flex items-center justify-center",
             "transition-all shadow-sm opacity-50 group-hover:opacity-100 focus:opacity-100",
-            isListening
+            isRecording
               ? "bg-red-500 text-white opacity-100 shadow-md shadow-red-200 animate-pulse"
+              : isTranscribing
+              ? "bg-amber-400 text-white opacity-100 cursor-not-allowed"
               : "bg-teal-600 text-white hover:bg-teal-700"
           )}
         >
-          {isListening
-            ? <MicOff className="w-3.5 h-3.5" />
-            : <Mic className="w-3.5 h-3.5" />}
+          {isTranscribing
+            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            : isRecording
+            ? <Square  className="w-3.5 h-3.5 fill-white" />
+            : <Mic     className="w-3.5 h-3.5" />}
         </button>
       </div>
 
-      {/* Live indicator */}
-      {isListening && (
+      {/* Recording indicator */}
+      {isRecording && (
         <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 border border-red-200 rounded-md text-xs text-red-600 select-none">
           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />
-          <span className="flex-1">
-            Listening
-            <span className="ml-1 font-medium text-red-500">
-              [{LANG_OPTIONS.find(o => o.code === lang)?.short ?? lang}]
-            </span>
-            {interim && <span className="text-red-400 italic ml-1">"{interim}"</span>}
+          <span className="flex-1 font-mono">{timer}</span>
+          <span className="text-red-400">
+            Recording [{lang.short}] — click ■ to stop
           </span>
-          <span className="text-red-400">Click mic to stop</span>
+        </div>
+      )}
+
+      {/* Transcribing indicator */}
+      {isTranscribing && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-700">
+          <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+          Transcribing with Groq Whisper…
         </div>
       )}
 
