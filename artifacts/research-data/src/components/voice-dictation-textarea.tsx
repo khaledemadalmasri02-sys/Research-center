@@ -1,8 +1,8 @@
 import { useRef, useState, useCallback } from "react";
 import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import { Mic, MicOff, Loader2, X } from "lucide-react";
+import { Mic, MicOff, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { correctMedicalText, type Correction } from "@/lib/medical-correction";
 
 // ── Web Speech API types ───────────────────────────────────────────────────
 
@@ -25,12 +25,7 @@ const LANG_OPTIONS: LangOption[] = [
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type Correction = { original: string; corrected: string; reason: string };
-type Phase =
-  | "idle"
-  | "listening"
-  | "correcting"
-  | "done";
+type Phase = "idle" | "listening" | "done";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -59,16 +54,6 @@ function bestTranscript(result: SpeechRecognitionResult): string {
   return best || result[0]!.transcript;
 }
 
-async function correctText(text: string): Promise<{ corrected: string; corrections: Correction[] }> {
-  const res = await fetch("/api/voice/correct", {
-    method:  "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify({ text }),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
-}
 
 // ── Component ──────────────────────────────────────────────────────────────
 
@@ -177,8 +162,8 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
     }
   }, [value, emit, lang, liveValue]);
 
-  // ── Stop + optional AI correction ────────────────────────────────────────
-  const stop = useCallback(async () => {
+  // ── Stop + local medical correction (instant, no API call) ──────────────
+  const stop = useCallback(() => {
     stopCalledRef.current = true;
     recRef.current?.stop();
     recRef.current = null;
@@ -190,21 +175,13 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
       return;
     }
 
-    // Commit what we have immediately so the user isn't waiting with a blank field
-    emit(liveValue(""));
-
-    setPhase("correcting");
-    try {
-      const { corrected, corrections } = await correctText(dictated);
-      const base = baseRef.current;
-      emit((base ? base + " " : "") + corrected);
-      setCorrections(corrections);
-      setPhase(corrections.length > 0 ? "done" : "idle");
-    } catch {
-      // Correction unavailable (no API key or network error) — keep raw text
-      setPhase("idle");
-    }
-  }, [emit, liveValue]);
+    // Apply local medical correction — runs synchronously, zero cost
+    const { corrected, corrections } = correctMedicalText(dictated);
+    const base = baseRef.current;
+    emit((base ? base + " " : "") + corrected);
+    setCorrections(corrections);
+    setPhase(corrections.length > 0 ? "done" : "idle");
+  }, [emit]);
 
   function dismiss() {
     stopCalledRef.current = true;
@@ -221,15 +198,14 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
     onChange(e);
   };
 
-  const isListening  = phase === "listening";
-  const isCorrecting = phase === "correcting";
-  const isDone       = phase === "done";
+  const isListening = phase === "listening";
+  const isDone      = phase === "done";
 
   return (
     <div className="space-y-1.5">
 
       {/* Language selector — shown only when idle */}
-      {!isListening && !isCorrecting && (
+      {!isListening && (
         <div className="flex items-center gap-1">
           {LANG_OPTIONS.map((opt) => (
             <button
@@ -259,15 +235,13 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
           onChange={handleChange}
           className={cn(
             "pr-10 min-h-[80px] transition-all resize-y",
-            isListening  && "ring-2 ring-red-400 border-red-300",
-            isCorrecting && "ring-2 ring-amber-300 border-amber-200",
+            isListening && "ring-2 ring-red-400 border-red-300",
             className
           )}
         />
 
         <button
           type="button"
-          disabled={isCorrecting}
           onClick={isListening ? stop : start}
           title={isListening ? "Stop recording" : `Start voice dictation (${LANG_OPTIONS.find(o => o.code === lang)?.label ?? lang})`}
           className={cn(
@@ -275,14 +249,10 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
             "transition-all shadow-sm opacity-50 group-hover:opacity-100 focus:opacity-100",
             isListening
               ? "bg-red-500 text-white opacity-100 shadow-md shadow-red-200 animate-pulse"
-              : isCorrecting
-              ? "bg-amber-400 text-white opacity-100 cursor-not-allowed"
               : "bg-teal-600 text-white hover:bg-teal-700"
           )}
         >
-          {isCorrecting
-            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            : isListening
+          {isListening
             ? <MicOff className="w-3.5 h-3.5" />
             : <Mic className="w-3.5 h-3.5" />}
         </button>
@@ -300,14 +270,6 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
             {interim && <span className="text-red-400 italic ml-1">"{interim}"</span>}
           </span>
           <span className="text-red-400">Click mic to stop</span>
-        </div>
-      )}
-
-      {/* Correcting indicator */}
-      {isCorrecting && (
-        <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-md text-xs text-amber-700">
-          <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-          Checking medical terminology…
         </div>
       )}
 
