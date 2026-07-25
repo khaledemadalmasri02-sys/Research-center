@@ -10,11 +10,28 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB – Whisper's max
 });
 
+// ── OpenRouter client (chat completions) ──────────────────────────────────────
+function getOpenRouter(): OpenAI {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY is not set");
+  return new OpenAI({
+    apiKey: key,
+    baseURL: "https://openrouter.ai/api/v1",
+    defaultHeaders: {
+      "HTTP-Referer": "https://replit.com",
+      "X-Title": "Medical Voice Dictation",
+    },
+  });
+}
+
+// ── OpenAI client (Whisper audio transcription only) ─────────────────────────
 function getOpenAI(): OpenAI {
   const key = process.env.OPENAI_API_KEY;
   if (!key) throw new Error("OPENAI_API_KEY is not set");
   return new OpenAI({ apiKey: key });
 }
+
+const OPENROUTER_MODEL = "mistralai/mistral-small-3.1-24b-instruct";
 
 const MEDICAL_SYSTEM_PROMPT = `You are a medical transcription correction assistant.
 The user will give you raw dictated text from a clinician. Your job is to:
@@ -33,6 +50,7 @@ Respond ONLY with a JSON object in this exact format:
 }
 If there are no corrections, return an empty array for "corrections".`;
 
+// ── Audio transcription (requires OPENAI_API_KEY for Whisper) ─────────────────
 router.post(
   "/voice/transcribe",
   upload.single("audio"),
@@ -42,16 +60,20 @@ router.post(
       return;
     }
 
+    // Whisper is only available via OpenAI — not on OpenRouter
     let openai: OpenAI;
     try {
       openai = getOpenAI();
-    } catch (err) {
-      res.status(503).json({ error: (err as Error).message });
+    } catch {
+      res.status(503).json({
+        error:
+          "Audio transcription requires an OpenAI API key (OPENAI_API_KEY). " +
+          "The live-microphone flow via the browser works without it.",
+      });
       return;
     }
 
     try {
-      // Detect MIME type from the upload (browser sends webm or ogg)
       const mime = req.file.mimetype || "audio/webm";
       const ext  = mime.includes("ogg") ? "ogg" : mime.includes("mp4") ? "mp4" : "webm";
 
@@ -71,27 +93,30 @@ router.post(
         return;
       }
 
-      // ── 2. Medical auto-correction with GPT-4o-mini ───────────────────────
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        response_format: { type: "json_object" },
-        max_tokens: 1024,
-        messages: [
-          { role: "system", content: MEDICAL_SYSTEM_PROMPT },
-          { role: "user",   content: transcript },
-        ],
-      });
-
+      // ── 2. Medical correction via OpenRouter ──────────────────────────────
       let corrected   = transcript;
       let corrections: Array<{ original: string; corrected: string; reason: string }> = [];
 
-      const raw = completion.choices[0]?.message?.content ?? "{}";
       try {
-        const parsed = JSON.parse(raw);
+        const openrouter = getOpenRouter();
+        const completion = await openrouter.chat.completions.create({
+          model:      OPENROUTER_MODEL,
+          max_tokens: 8192,
+          messages: [
+            { role: "system", content: MEDICAL_SYSTEM_PROMPT },
+            { role: "user",   content: transcript },
+          ],
+        });
+
+        const raw = completion.choices[0]?.message?.content ?? "{}";
+        // Strip markdown code fences if the model wraps its JSON
+        const clean = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+        const parsed = JSON.parse(clean);
         corrected   = parsed.corrected   ?? transcript;
         corrections = parsed.corrections ?? [];
-      } catch {
-        // If JSON parse fails, use raw transcript unchanged
+      } catch (corrErr) {
+        // Correction is best-effort; return the raw transcript if it fails
+        req.log.warn({ corrErr }, "OpenRouter correction step failed — returning raw transcript");
       }
 
       res.json({ transcript, corrected, corrections });
@@ -103,8 +128,7 @@ router.post(
   }
 );
 
-// ── Text-only medical correction (used by live Web Speech API flow) ────────
-
+// ── Text-only medical correction (used by live Web Speech API flow) ────────────
 router.post(
   "/voice/correct",
   express.json(),
@@ -115,19 +139,18 @@ router.post(
       return;
     }
 
-    let openai: OpenAI;
+    let openrouter: OpenAI;
     try {
-      openai = getOpenAI();
+      openrouter = getOpenRouter();
     } catch (err) {
       res.status(503).json({ error: (err as Error).message });
       return;
     }
 
     try {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        response_format: { type: "json_object" },
-        max_tokens: 1024,
+      const completion = await openrouter.chat.completions.create({
+        model:      OPENROUTER_MODEL,
+        max_tokens: 8192,
         messages: [
           { role: "system", content: MEDICAL_SYSTEM_PROMPT },
           { role: "user",   content: text },
@@ -139,7 +162,9 @@ router.post(
 
       const raw = completion.choices[0]?.message?.content ?? "{}";
       try {
-        const parsed = JSON.parse(raw);
+        // Strip markdown code fences if present
+        const clean = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+        const parsed = JSON.parse(clean);
         corrected   = parsed.corrected   ?? text;
         corrections = parsed.corrections ?? [];
       } catch { /* keep raw text */ }
