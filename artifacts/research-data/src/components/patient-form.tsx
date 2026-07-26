@@ -102,9 +102,15 @@ function MultiRadiologyUploader({
   const { toast } = useToast();
   const [isPasteFocused, setIsPasteFocused] = useState(false);
   const [uploadingCount, setUploadingCount] = useState(0);
+  const [brokenPaths, setBrokenPaths] = useState<Set<string>>(new Set());
 
   const paths = parsePaths(value);
   const isUploading = uploadingCount > 0;
+  const brokenCount = paths.filter((p) => brokenPaths.has(p)).length;
+
+  const markBroken = useCallback((p: string) => {
+    setBrokenPaths((prev) => new Set([...prev, p]));
+  }, []);
 
   const { uploadFile } = useUpload({
     onSuccess: () => {},
@@ -196,30 +202,66 @@ function MultiRadiologyUploader({
         </div>
       </div>
 
+      {/* Broken-path warning banner */}
+      {brokenCount > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-700 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+          <ImageIcon className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            <strong>{brokenCount} image{brokenCount > 1 ? "s" : ""} not found</strong> in storage — these were from a previous environment.
+            Remove them and re-upload your original files.
+          </span>
+        </div>
+      )}
+
       {/* Image gallery */}
       {paths.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {paths.map((p, idx) => (
-            <div key={idx} className="relative group border rounded-lg overflow-hidden bg-muted/30 aspect-square">
-              <img
-                src={p.startsWith("/objects/") ? `/api/storage${p}` : p}
-                alt={`Radiology ${idx + 1}`}
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
-              <button
-                type="button"
-                onClick={() => removeAt(idx)}
-                className="absolute top-1 right-1 bg-black/60 hover:bg-destructive text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Remove image"
+          {paths.map((p, idx) => {
+            const src = p.startsWith("/objects/") ? `/api/storage${p}` : p;
+            const isBroken = brokenPaths.has(p);
+            return (
+              <div
+                key={idx}
+                className={`relative group border-2 rounded-lg overflow-hidden bg-muted/30 aspect-square ${
+                  isBroken ? "border-amber-400 dark:border-amber-600" : "border-transparent"
+                }`}
               >
-                <X className="w-3.5 h-3.5" />
-              </button>
-              <span className="absolute bottom-1 left-1 bg-black/50 text-white text-xs rounded px-1">
-                {idx + 1}
-              </span>
-            </div>
-          ))}
+                {isBroken ? (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-1 bg-amber-50 dark:bg-amber-950/30 p-2 text-center">
+                    <ImageIcon className="w-7 h-7 text-amber-500" />
+                    <span className="text-[10px] text-amber-700 dark:text-amber-400 leading-tight">
+                      Not found — remove &amp; re-upload
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <img
+                      src={src}
+                      alt={`Radiology ${idx + 1}`}
+                      className="w-full h-full object-cover"
+                      onError={() => markBroken(p)}
+                    />
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors" />
+                    <span className="absolute bottom-1 left-1 bg-black/50 text-white text-xs rounded px-1">
+                      {idx + 1}
+                    </span>
+                  </>
+                )}
+                <button
+                  type="button"
+                  onClick={() => removeAt(idx)}
+                  className={`absolute top-1 right-1 text-white rounded-full p-0.5 transition-opacity ${
+                    isBroken
+                      ? "bg-amber-500 hover:bg-destructive opacity-100"
+                      : "bg-black/60 hover:bg-destructive opacity-0 group-hover:opacity-100"
+                  }`}
+                  title="Remove image"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            );
+          })}
           {isUploading && (
             <div className="border-2 border-dashed rounded-lg aspect-square flex items-center justify-center bg-muted/20">
               <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
