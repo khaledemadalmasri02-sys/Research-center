@@ -161,10 +161,16 @@ export function detectField(header: string): ImportableField | null {
     if (aliases.includes(n)) return field;
   }
 
+  // 4. Pattern: "Image 1", "Image 2", "Image3", "Radiology 1", etc.
+  //    Maps each numbered image column to radiologyImages so all are collected.
+  if (/^(image|radiologyimage|radiology|photo|picture|scan|xray)\d+$/.test(n)) {
+    return "radiologyImages";
+  }
+
   return null;
 }
 
-export type ColumnMap  = { header: string; field: ImportableField | null };
+export type ColumnMap  = { header: string; field: ImportableField | null; colIdx: number };
 export type ParsedImport = {
   /** Auto-detected column mapping (one entry per Excel column with a header) */
   columnMap:  ColumnMap[];
@@ -289,12 +295,14 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
           if (s > bestScore) { bestScore = s; headerRowIndex = r; }
         }
 
-        // Build column map from the chosen header row
+        // Build column map from the chosen header row.
+        // Store the actual worksheet column index (colIdx) so row-reading
+        // stays aligned even when some columns have empty headers and are skipped.
         const columnMap: ColumnMap[] = [];
         for (let c = range.s.c; c <= range.e.c; c++) {
           const val = cellToString(ws[XLSX.utils.encode_cell({ r: headerRowIndex, c })]);
           if (!val) continue;
-          columnMap.push({ header: val, field: detectField(val) });
+          columnMap.push({ header: val, field: detectField(val), colIdx: c });
         }
 
         // Build rows
@@ -306,10 +314,8 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
           const raw: Record<string, string> = {};
           let hasValue = false;
 
-          for (let ci = 0; ci < columnMap.length; ci++) {
-            const col = columnMap[ci]!;
-            const c   = range.s.c + ci;
-            const val = cellToString(ws[XLSX.utils.encode_cell({ r, c })]);
+          for (const col of columnMap) {
+            const val = cellToString(ws[XLSX.utils.encode_cell({ r, c: col.colIdx })]);
             raw[col.header] = val;
             if (col.field) mapped[col.field] = val;
             if (val) hasValue = true;
@@ -342,12 +348,22 @@ export function applyColumnMapping(
   rawRows: Record<string, string>[],
   mapping: Record<string, ImportableField | null>
 ): Record<ImportableField, string>[] {
+  // Fields that accumulate values from multiple source columns (joined with "|")
+  const MULTI_JOIN_FIELDS = new Set<ImportableField>(["radiologyImages"]);
+
   return rawRows.map((rawRow) => {
     const result = {} as Record<ImportableField, string>;
     for (const [header, field] of Object.entries(mapping)) {
       if (!field) continue;
-      const val = rawRow[header] ?? "";
-      if (val || !(field in result)) result[field] = val;
+      const val = (rawRow[header] ?? "").trim();
+      if (!val) continue;
+
+      if (MULTI_JOIN_FIELDS.has(field) && result[field]) {
+        // Append additional image paths with "|" separator
+        result[field] = `${result[field]} | ${val}`;
+      } else if (!(field in result)) {
+        result[field] = val;
+      }
     }
     return result;
   });
