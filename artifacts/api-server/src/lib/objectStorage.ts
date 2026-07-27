@@ -146,12 +146,24 @@ export class ObjectStorageService {
     const objectEntityPath = `${entityDir}${entityId}`;
     const { bucketName, objectName } = parseObjectPath(objectEntityPath);
     const bucket = objectStorageClient.bucket(bucketName);
-    const objectFile = bucket.file(objectName);
-    const [exists] = await objectFile.exists();
-    if (!exists) {
-      throw new ObjectNotFoundError();
+
+    // Try exact path first
+    const exactFile = bucket.file(objectName);
+    const [exactExists] = await exactFile.exists();
+    if (exactExists) {
+      return exactFile;
     }
-    return objectFile;
+
+    // If the path has no extension, the file may have been uploaded with one.
+    // Do a prefix search and return the first match.
+    if (!objectName.match(/\.[a-zA-Z0-9]{2,5}$/)) {
+      const [candidates] = await bucket.getFiles({ prefix: objectName, maxResults: 1 });
+      if (candidates.length > 0) {
+        return candidates[0]!;
+      }
+    }
+
+    throw new ObjectNotFoundError();
   }
 
   normalizeObjectEntityPath(rawPath: string): string {
