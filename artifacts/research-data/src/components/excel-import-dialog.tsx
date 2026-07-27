@@ -203,7 +203,7 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
               )}
 
               {/* Mapping table */}
-              <ScrollArea className="flex-1 border rounded-lg">
+              <ScrollArea className="flex-1 min-h-0 border rounded-lg" style={{ maxHeight: "calc(90vh - 260px)" }}>
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-muted z-10">
                     <tr>
