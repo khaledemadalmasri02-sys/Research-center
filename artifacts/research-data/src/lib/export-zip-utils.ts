@@ -87,18 +87,27 @@ export async function exportImagesAsZip(
 
   onProgress?.(0, allImages.length);
 
+  // Pre-compute per-patient image counts so we know whether to add (N) suffixes
+  const patientImageCounts = new Map<string, number>();
+  for (const p of patients) {
+    const id = (p.patientId ?? "unknown").replace(/[<>:"/\\|?*]/g, "_");
+    patientImageCounts.set(id, parseImagePaths(p).length);
+  }
+
   for (const { patient, path, idx } of allImages) {
     const result = await fetchImage(path);
-    const n = String(idx + 1).padStart(2, "0");
-    // Sanitise patient ID so it's safe as a folder name
-    const folder = (patient.patientId ?? "unknown").replace(/[<>:"/\\|?*]/g, "_");
+    const id = (patient.patientId ?? "unknown").replace(/[<>:"/\\|?*]/g, "_");
+    const total = patientImageCounts.get(id) ?? 1;
+
+    // Single image → "PatientID.ext"
+    // Multiple images → "PatientID(1).ext", "PatientID(2).ext", …
+    const baseName = total === 1 ? id : `${id}(${idx + 1})`;
 
     if (result) {
-      zip.file(`${folder}/image_${n}.${result.ext}`, result.blob);
+      zip.file(`${baseName}.${result.ext}`, result.blob);
       downloaded++;
     } else {
-      // Keep a placeholder note so the folder still exists in the ZIP
-      zip.file(`${folder}/image_${n}_unavailable.txt`, `Could not fetch: ${path}`);
+      zip.file(`${baseName}_unavailable.txt`, `Could not fetch: ${path}`);
       skipped++;
     }
 

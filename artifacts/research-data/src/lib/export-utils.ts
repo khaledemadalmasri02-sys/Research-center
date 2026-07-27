@@ -126,20 +126,16 @@ export async function exportToExcel(
     pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
   });
 
-  // Build the full column list: base + image preview cols + image-paths text col
+  // Build the full column list: base cols + one preview col per image
   const imgPreviewCols = Array.from({ length: maxImages }, (_, i) => ({
     header: maxImages === 1 ? "Radiology Image" : `Image ${i + 1}`,
     key: `img_${i}`,
     width: 24,
   }));
 
-  // "Image Paths" is a plain-text column placed AFTER the previews so it can be
-  // read back by the importer (embedded images can't be re-imported by SheetJS).
-  const tailCols = [{ header: "Image Paths", key: "imagePaths", width: 50 }];
+  ws.columns = [...BASE_COLS, ...imgPreviewCols] as unknown as ExcelJS.Column[];
 
-  ws.columns = [...BASE_COLS, ...imgPreviewCols, ...tailCols] as unknown as ExcelJS.Column[];
-
-  const totalCols = BASE_COLS.length + maxImages + tailCols.length;
+  const totalCols = BASE_COLS.length + maxImages;
 
   // Style header row — includeEmpty so every defined column cell is styled
   const hdr = ws.getRow(1);
@@ -191,7 +187,6 @@ export async function exportToExcel(
       finalDxAr:        p.finalConfirmedDiagnosisAr ?? "",
       notes:            p.notes ?? "",
       ...imgCellData,
-      imagePaths:       imgPaths.join(" | "),
     });
 
     row.height = IMG_H;
