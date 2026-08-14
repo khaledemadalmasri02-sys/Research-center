@@ -183,6 +183,35 @@ export type ParsedImport = {
   headerRowIndex: number;
 };
 
+/**
+ * Return only rows whose selected source-column value contains at least one
+ * keyword. Matching is case-insensitive substring matching.
+ *
+ * When filtering is not fully configured, the original rows are returned so
+ * the existing import behavior remains unchanged.
+ */
+export function filterImportRows(
+  rawRows: Record<string, string>[],
+  options: {
+    enabled: boolean;
+    column: string;
+    keywords: string[];
+  },
+): Record<string, string>[] {
+  const keywords = options.keywords
+    .map((keyword) => keyword.trim().toLocaleLowerCase())
+    .filter(Boolean);
+
+  if (!options.enabled || !options.column || keywords.length === 0) {
+    return rawRows;
+  }
+
+  return rawRows.filter((row) => {
+    const value = String(row[options.column] ?? "").trim().toLocaleLowerCase();
+    return value.length > 0 && keywords.some((keyword) => value.includes(keyword));
+  });
+}
+
 // ── Date helpers ──────────────────────────────────────────────────────────────
 
 function excelSerialToISO(serial: number): string | null {

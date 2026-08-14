@@ -1,15 +1,17 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, XCircle, FileSpreadsheet, Loader2, Upload, AlertTriangle, ChevronRight } from "lucide-react";
+import { CheckCircle2, XCircle, FileSpreadsheet, Loader2, Upload, AlertTriangle, ChevronRight, Filter } from "lucide-react";
 import {
   parseExcelFile,
   applyColumnMapping,
+  filterImportRows,
   rowToPatient,
   detectField,
   FIELD_LABELS,
@@ -40,6 +42,9 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
 
   // User-editable column mapping: Excel header → ImportableField | null
   const [userMapping, setUserMapping] = useState<Record<string, ImportableField | null>>({});
+  const [filterEnabled, setFilterEnabled] = useState(false);
+  const [filterColumn, setFilterColumn] = useState("");
+  const [filterKeywordText, setFilterKeywordText] = useState("");
 
   function reset() {
     setPhase("idle");
@@ -49,6 +54,9 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
     setResult(null);
     setParseError(null);
     setUserMapping({});
+    setFilterEnabled(false);
+    setFilterColumn("");
+    setFilterKeywordText("");
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -75,6 +83,9 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
         initial[col.header] = col.field;
       }
       setUserMapping(initial);
+      setFilterColumn("");
+      setFilterKeywordText("");
+      setFilterEnabled(false);
       setParsed(result);
       setPhase("mapping");
     } catch (err) {
@@ -95,13 +106,40 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
   // First data row values for preview
   const firstRaw = parsed?.rawRows[0] ?? {};
 
+  const filterKeywords = useMemo(
+    () => filterKeywordText.split(/[,;\n]+/).map((keyword) => keyword.trim()).filter(Boolean),
+    [filterKeywordText],
+  );
+  const filterConfigured = filterEnabled && Boolean(filterColumn) && filterKeywords.length > 0;
+  const filteredRawRows = useMemo(
+    () => filterImportRows(parsed?.rawRows ?? [], {
+      enabled: filterEnabled,
+      column: filterColumn,
+      keywords: filterKeywords,
+    }),
+    [parsed?.rawRows, filterEnabled, filterColumn, filterKeywords],
+  );
+  const excludedRowCount = (parsed?.rawRows.length ?? 0) - filteredRawRows.length;
+  const filterSampleValues = useMemo(
+    () => filteredRawRows.slice(0, 3).map((row) => String(row[filterColumn] ?? "").trim()).filter(Boolean),
+    [filteredRawRows, filterColumn],
+  );
+  const excludedSampleValues = useMemo(
+    () => (parsed?.rawRows ?? [])
+      .filter((row) => !filteredRawRows.includes(row))
+      .slice(0, 3)
+      .map((row) => String(row[filterColumn] ?? "").trim() || "empty"),
+    [parsed?.rawRows, filteredRawRows, filterColumn],
+  );
+
   async function handleImport() {
     if (!parsed) return;
+    if (filterConfigured && filteredRawRows.length === 0) return;
     setPhase("importing");
     setProgress(0);
 
     // Apply user mapping to produce properly-keyed rows
-    const mappedRows  = applyColumnMapping(parsed.rawRows, userMapping);
+    const mappedRows  = applyColumnMapping(filteredRawRows, userMapping);
     const patients    = mappedRows.map(rowToPatient);
     const total       = patients.length;
     let done   = 0;
@@ -137,7 +175,7 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
             Import from Excel
           </DialogTitle>
           <DialogDescription>
-            Upload an Excel file (.xlsx / .xls). Headers are auto-detected — you can fix any mapping before importing.
+            Upload an Excel file (.xlsx / .xls). Headers are auto-detected — you can fix mapping and optionally filter rows before importing.
           </DialogDescription>
         </DialogHeader>
 
@@ -201,6 +239,91 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
                   </AlertDescription>
                 </Alert>
               )}
+
+              {/* Optional row filter */}
+              <div className="shrink-0 rounded-lg border bg-muted/20 p-3 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="enable-import-filter"
+                    checked={filterEnabled}
+                    onCheckedChange={(checked) => setFilterEnabled(checked === true)}
+                  />
+                  <label htmlFor="enable-import-filter" className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                    <Filter className="w-4 h-4 text-primary" />
+                    Filter rows before import
+                  </label>
+                </div>
+
+                {filterEnabled && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-muted-foreground">Filter by Excel column</label>
+                      <Select value={filterColumn} onValueChange={setFilterColumn}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Choose a column" />
+                        </SelectTrigger>
+                        <SelectContent className="max-h-72 text-xs">
+                          {parsed.columnMap.map((col) => (
+                            <SelectItem key={col.header} value={col.header}>
+                              {col.header}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <label htmlFor="import-filter-keywords" className="text-xs font-medium text-muted-foreground">
+                        Keywords
+                      </label>
+                      <Input
+                        id="import-filter-keywords"
+                        value={filterKeywordText}
+                        onChange={(e) => setFilterKeywordText(e.target.value)}
+                        placeholder="e.g. trauma, fracture"
+                        className="h-8 text-xs"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {filterEnabled && (
+                  <div className="text-xs">
+                    {!filterColumn || filterKeywords.length === 0 ? (
+                      <span className="text-muted-foreground">
+                        Choose a column and enter one or more keywords. Separate keywords with commas.
+                      </span>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="font-medium text-emerald-700">{filteredRawRows.length} included</span>
+                          <span className="text-muted-foreground">{excludedRowCount} excluded</span>
+                          <span className="text-muted-foreground">(matches any keyword, case-insensitive)</span>
+                        </div>
+                        {filterConfigured && filteredRawRows.length === 0 && (
+                          <Alert variant="destructive" className="mt-2 py-2">
+                            <AlertTriangle className="w-4 h-4" />
+                            <AlertDescription className="text-xs">
+                              No rows match these keywords. Change the filter before importing.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        {filterConfigured && filteredRawRows.length > 0 && (
+                          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-muted-foreground">
+                            <div className="truncate" title={filterSampleValues.join(" · ")}>
+                              <span className="font-medium text-foreground">Included:</span>{" "}
+                              {filterSampleValues.join(" · ") || "—"}
+                            </div>
+                            <div className="truncate" title={excludedSampleValues.join(" · ")}>
+                              <span className="font-medium text-foreground">Excluded:</span>{" "}
+                              {excludedSampleValues.join(" · ") || "none"}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
 
               {/* Mapping table */}
               <ScrollArea className="flex-1 min-h-0 border rounded-lg" style={{ maxHeight: "calc(90vh - 260px)" }}>
@@ -352,14 +475,16 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
               <Button variant="outline" onClick={reset}>Back</Button>
               <Button
                 onClick={handleImport}
-                disabled={missingRequired.length > 0}
+                disabled={missingRequired.length > 0 || (filterConfigured && filteredRawRows.length === 0)}
                 title={
                   missingRequired.length > 0
                     ? `Assign ${missingRequired.map((f) => FIELD_LABELS[f]).join(" and ")} first`
+                    : filterConfigured && filteredRawRows.length === 0
+                    ? "Change the filter so at least one row matches"
                     : undefined
                 }
               >
-                Import {parsed!.rawRows.length} record{parsed!.rawRows.length !== 1 ? "s" : ""}
+                Import {filterConfigured ? filteredRawRows.length : parsed!.rawRows.length} record{(filterConfigured ? filteredRawRows.length : parsed!.rawRows.length) !== 1 ? "s" : ""}
               </Button>
             </>
           ) : phase === "done" ? (
