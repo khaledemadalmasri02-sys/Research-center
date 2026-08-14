@@ -335,6 +335,7 @@ export function PatientForm({ initialData, isEdit }: PatientFormProps) {
         await updatePatient.mutateAsync({ id: initialData.id, data });
         toast({ title: "Success", description: "Patient record updated." });
         queryClient.invalidateQueries({ queryKey: getGetPatientQueryKey(initialData.id) });
+        setLocation(`/patients/${initialData.id}`);
       } else {
         const res = await createPatient.mutateAsync({ data });
         toast({ title: "Success", description: "Patient record created." });
