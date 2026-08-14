@@ -162,6 +162,16 @@ export default function Patients() {
   const selectedCount = selectedIds.size;
   const exportTarget = selectedCount > 0 ? patients.filter((p) => selectedIds.has(p.id)) : patients;
 
+  function patientDetailHref(id: number): string {
+    const params = new URLSearchParams();
+    if (search) params.set("search", search);
+    if (sexFilter !== "all") params.set("sex", sexFilter);
+    if (typeFilter !== "all") params.set("collectionType", typeFilter);
+    params.set("sortKey", sortKey);
+    params.set("sortDir", sortDir);
+    return `/patients/${id}?${params.toString()}`;
+  }
+
   async function handleZipExport() {
     if (exportTarget.length === 0) {
       toast({ title: "Nothing to export", variant: "destructive" });
@@ -585,12 +595,12 @@ export default function Patients() {
                         />
                       </TableCell>
                       <TableCell>
-                        <Link href={`/patients/${patient.id}`}>
+                        <Link href={patientDetailHref(patient.id)}>
                           <RadiologyThumb patient={patient as any} />
                         </Link>
                       </TableCell>
                       <TableCell className="font-medium">
-                        <Link href={`/patients/${patient.id}`} className="text-primary hover:underline">
+                        <Link href={patientDetailHref(patient.id)} className="text-primary hover:underline">
                           {patient.patientId}
                         </Link>
                       </TableCell>

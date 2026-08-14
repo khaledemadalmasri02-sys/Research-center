@@ -1,10 +1,11 @@
 import { Layout } from "@/components/layout";
-import { useGetPatient, getGetPatientQueryKey, useDeletePatient, getListPatientsQueryKey, getGetPatientStatsQueryKey } from "@workspace/api-client-react";
+import { useGetPatient, getGetPatientQueryKey, useDeletePatient, getListPatientsQueryKey, getGetPatientStatsQueryKey, useListPatients } from "@workspace/api-client-react";
 import { useParams, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Edit, Trash2, Printer } from "lucide-react";
+import { Edit, Trash2, Printer, ArrowLeft, ArrowRight } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
+import { useMemo } from "react";
 import { 
   AlertDialog, 
   AlertDialogAction, 
@@ -102,13 +103,62 @@ function RadiologyGallery({ patient }: { patient: any }) {
 export default function PatientDetail() {
   const { id } = useParams();
   const patientId = Number(id);
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const listContext = useMemo(() => {
+    const queryStart = location.indexOf("?");
+    const params = new URLSearchParams(queryStart >= 0 ? location.slice(queryStart + 1) : "");
+    return {
+      search: params.get("search") ?? "",
+      sex: params.get("sex") ?? "all",
+      collectionType: params.get("collectionType") ?? "all",
+      sortKey: params.get("sortKey") ?? "createdAt",
+      sortDir: params.get("sortDir") === "asc" ? "asc" as const : "desc" as const,
+    };
+  }, [location]);
   
   const { data: patient, isLoading } = useGetPatient(patientId, {
     query: { enabled: !!patientId, queryKey: getGetPatientQueryKey(patientId) }
   });
+
+  const { data: navigationData, isLoading: isNavigationLoading } = useListPatients({
+    search: listContext.search || undefined,
+    sex: listContext.sex !== "all" ? listContext.sex : undefined,
+    collectionType: listContext.collectionType !== "all" ? listContext.collectionType : undefined,
+    limit: 1000,
+  });
+
+  const navigationPatients = useMemo(() => {
+    const list = navigationData?.patients ?? [];
+    return [...list].sort((a, b) => {
+      const av = (a as unknown as Record<string, unknown>)[listContext.sortKey];
+      const bv = (b as unknown as Record<string, unknown>)[listContext.sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
+      return listContext.sortDir === "asc" ? cmp : -cmp;
+    });
+  }, [navigationData, listContext.sortKey, listContext.sortDir]);
+
+  const currentIndex = navigationPatients.findIndex((p) => p.id === patientId);
+  const previousPatient = currentIndex > 0 ? navigationPatients[currentIndex - 1] : undefined;
+  const nextPatient =
+    currentIndex >= 0 && currentIndex < navigationPatients.length - 1
+      ? navigationPatients[currentIndex + 1]
+      : undefined;
+
+  function detailHref(nextId: number): string {
+    const params = new URLSearchParams();
+    if (listContext.search) params.set("search", listContext.search);
+    if (listContext.sex !== "all") params.set("sex", listContext.sex);
+    if (listContext.collectionType !== "all") params.set("collectionType", listContext.collectionType);
+    params.set("sortKey", listContext.sortKey);
+    params.set("sortDir", listContext.sortDir);
+    return `/patients/${nextId}?${params.toString()}`;
+  }
 
   const deletePatient = useDeletePatient();
 
@@ -163,6 +213,32 @@ export default function PatientDetail() {
             </div>
           )}
         </div>
+
+          <div className="flex items-center justify-between gap-3 border-y py-3">
+            <Button
+              variant="outline"
+              onClick={() => previousPatient && setLocation(detailHref(previousPatient.id))}
+              disabled={isNavigationLoading || !previousPatient}
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Previous
+            </Button>
+            <span className="text-sm text-muted-foreground text-center">
+              {currentIndex >= 0
+                ? `${currentIndex + 1} of ${navigationPatients.length}`
+                : isNavigationLoading
+                ? "Loading list…"
+                : "Not in current list"}
+            </span>
+            <Button
+              variant="outline"
+              onClick={() => nextPatient && setLocation(detailHref(nextPatient.id))}
+              disabled={isNavigationLoading || !nextPatient}
+            >
+              Next
+              <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
 
         {isLoading ? (
           <div className="space-y-8">
