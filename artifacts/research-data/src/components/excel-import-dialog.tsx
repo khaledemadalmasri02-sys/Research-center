@@ -7,11 +7,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CheckCircle2, XCircle, FileSpreadsheet, Loader2, Upload, AlertTriangle, ChevronRight, Filter } from "lucide-react";
+import { CheckCircle2, XCircle, FileSpreadsheet, Loader2, Upload, AlertTriangle, ChevronRight, Filter, Plus, Trash2 } from "lucide-react";
+import { filterImportRows, isImportBlocked, type ImportFilterRule } from "@/lib/import-filter";
 import {
   parseExcelFile,
   applyColumnMapping,
-  filterImportRows,
   rowToPatient,
   detectField,
   FIELD_LABELS,
@@ -30,6 +30,11 @@ type Phase = "idle" | "mapping" | "importing" | "done";
 
 const SKIP_VALUE = "__skip__";
 const ALL_FIELDS = Object.keys(FIELD_LABELS) as ImportableField[];
+type FilterRuleState = ImportFilterRule & { keywordText: string };
+
+function emptyFilterRule(): FilterRuleState {
+  return { column: "", keywords: [], keywordText: "" };
+}
 
 export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -43,8 +48,7 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
   // User-editable column mapping: Excel header → ImportableField | null
   const [userMapping, setUserMapping] = useState<Record<string, ImportableField | null>>({});
   const [filterEnabled, setFilterEnabled] = useState(false);
-  const [filterColumn, setFilterColumn] = useState("");
-  const [filterKeywordText, setFilterKeywordText] = useState("");
+  const [filterRules, setFilterRules] = useState<FilterRuleState[]>([emptyFilterRule()]);
 
   function reset() {
     setPhase("idle");
@@ -55,8 +59,7 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
     setParseError(null);
     setUserMapping({});
     setFilterEnabled(false);
-    setFilterColumn("");
-    setFilterKeywordText("");
+    setFilterRules([emptyFilterRule()]);
     if (fileRef.current) fileRef.current.value = "";
   }
 
@@ -83,8 +86,7 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
         initial[col.header] = col.field;
       }
       setUserMapping(initial);
-      setFilterColumn("");
-      setFilterKeywordText("");
+      setFilterRules([emptyFilterRule()]);
       setFilterEnabled(false);
       setParsed(result);
       setPhase("mapping");
@@ -106,31 +108,53 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
   // First data row values for preview
   const firstRaw = parsed?.rawRows[0] ?? {};
 
-  const filterKeywords = useMemo(
-    () => filterKeywordText.split(/[,;\n]+/).map((keyword) => keyword.trim()).filter(Boolean),
-    [filterKeywordText],
+  const parsedFilterRules = useMemo(
+    () => filterRules.map((rule) => ({
+      column: rule.column,
+      keywords: rule.keywordText.split(/[,;\n]+/).map((keyword) => keyword.trim()).filter(Boolean),
+    })),
+    [filterRules],
   );
-  const filterConfigured = filterEnabled && Boolean(filterColumn) && filterKeywords.length > 0;
+  const activeFilterRules = useMemo(
+    () => parsedFilterRules.filter((rule) => rule.column && rule.keywords.length > 0),
+    [parsedFilterRules],
+  );
+  const filterConfigured = filterEnabled && activeFilterRules.length > 0;
   const filteredRawRows = useMemo(
-    () => filterImportRows(parsed?.rawRows ?? [], {
-      enabled: filterEnabled,
-      column: filterColumn,
-      keywords: filterKeywords,
-    }),
-    [parsed?.rawRows, filterEnabled, filterColumn, filterKeywords],
+    () => filterImportRows(parsed?.rawRows ?? [], { enabled: filterEnabled, filters: parsedFilterRules }),
+    [parsed?.rawRows, filterEnabled, parsedFilterRules],
   );
   const excludedRowCount = (parsed?.rawRows.length ?? 0) - filteredRawRows.length;
   const filterSampleValues = useMemo(
-    () => filteredRawRows.slice(0, 3).map((row) => String(row[filterColumn] ?? "").trim()).filter(Boolean),
-    [filteredRawRows, filterColumn],
+    () => filteredRawRows.slice(0, 3).map((row) =>
+      activeFilterRules.map((rule) => `${rule.column}: ${String(row[rule.column] ?? "").trim()}`).join(" · "),
+    ),
+    [filteredRawRows, activeFilterRules],
   );
   const excludedSampleValues = useMemo(
     () => (parsed?.rawRows ?? [])
       .filter((row) => !filteredRawRows.includes(row))
       .slice(0, 3)
-      .map((row) => String(row[filterColumn] ?? "").trim() || "empty"),
-    [parsed?.rawRows, filteredRawRows, filterColumn],
+      .map((row) => activeFilterRules.map((rule) => `${rule.column}: ${String(row[rule.column] ?? "").trim() || "empty"}`).join(" · ")),
+    [parsed?.rawRows, filteredRawRows, activeFilterRules],
   );
+
+  function updateFilterRule(index: number, update: Partial<FilterRuleState>) {
+    setFilterRules((previous) => previous.map((rule, ruleIndex) =>
+      ruleIndex === index ? { ...rule, ...update } : rule,
+    ));
+  }
+
+  function addFilterRule() {
+    setFilterRules((previous) => [...previous, emptyFilterRule()]);
+  }
+
+  function removeFilterRule(index: number) {
+    setFilterRules((previous) => {
+      const next = previous.filter((_, ruleIndex) => ruleIndex !== index);
+      return next.length > 0 ? next : [emptyFilterRule()];
+    });
+  }
 
   async function handleImport() {
     if (!parsed) return;
@@ -255,49 +279,66 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
                 </div>
 
                 {filterEnabled && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-xs font-medium text-muted-foreground">Filter by Excel column</label>
-                      <Select value={filterColumn} onValueChange={setFilterColumn}>
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue placeholder="Choose a column" />
-                        </SelectTrigger>
-                        <SelectContent className="max-h-72 text-xs">
-                          {parsed.columnMap.map((col) => (
-                            <SelectItem key={col.header} value={col.header}>
-                              {col.header}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1">
-                      <label htmlFor="import-filter-keywords" className="text-xs font-medium text-muted-foreground">
-                        Keywords
-                      </label>
-                      <Input
-                        id="import-filter-keywords"
-                        value={filterKeywordText}
-                        onChange={(e) => setFilterKeywordText(e.target.value)}
-                        placeholder="e.g. trauma, fracture"
-                        className="h-8 text-xs"
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Each rule matches any of its keywords. A row must match every rule to be imported.
+                    </p>
+                    {filterRules.map((rule, index) => (
+                      <div key={index} className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground w-14 shrink-0">Rule {index + 1}</span>
+                        <Select value={rule.column} onValueChange={(value) => updateFilterRule(index, { column: value })}>
+                          <SelectTrigger className="h-8 text-xs flex-1 min-w-0">
+                            <SelectValue placeholder="Choose a column" />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-72 text-xs">
+                            {parsed.columnMap.map((col) => (
+                              <SelectItem key={col.header} value={col.header}>
+                                {col.header}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Input
+                          aria-label={`Keywords for filter rule ${index + 1}`}
+                          value={rule.keywordText}
+                          onChange={(e) => updateFilterRule(index, {
+                            keywordText: e.target.value,
+                            keywords: e.target.value.split(/[,;\n]+/).map((keyword) => keyword.trim()).filter(Boolean),
+                          })}
+                          placeholder="Keywords, separated by commas"
+                          className="h-8 flex-1 min-w-0 text-xs"
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                          onClick={() => removeFilterRule(index)}
+                          disabled={filterRules.length === 1}
+                          aria-label={`Remove filter rule ${index + 1}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ))}
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={addFilterRule}>
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add filter
+                    </Button>
                   </div>
                 )}
 
                 {filterEnabled && (
                   <div className="text-xs">
-                    {!filterColumn || filterKeywords.length === 0 ? (
+                    {activeFilterRules.length === 0 ? (
                       <span className="text-muted-foreground">
-                        Choose a column and enter one or more keywords. Separate keywords with commas.
+                        Choose a column and enter keywords for at least one rule. Separate keywords with commas.
                       </span>
                     ) : (
                       <>
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                           <span className="font-medium text-emerald-700">{filteredRawRows.length} included</span>
                           <span className="text-muted-foreground">{excludedRowCount} excluded</span>
-                          <span className="text-muted-foreground">(matches any keyword, case-insensitive)</span>
+                          <span className="text-muted-foreground">(all rules must match; keywords within a rule use OR)</span>
                         </div>
                         {filterConfigured && filteredRawRows.length === 0 && (
                           <Alert variant="destructive" className="mt-2 py-2">
@@ -475,7 +516,11 @@ export function ExcelImportDialog({ open, onOpenChange, onImport }: Props) {
               <Button variant="outline" onClick={reset}>Back</Button>
               <Button
                 onClick={handleImport}
-                disabled={missingRequired.length > 0 || (filterConfigured && filteredRawRows.length === 0)}
+                disabled={isImportBlocked({
+                  missingRequiredCount: missingRequired.length,
+                  filterConfigured,
+                  matchingRowCount: filteredRawRows.length,
+                })}
                 title={
                   missingRequired.length > 0
                     ? `Assign ${missingRequired.map((f) => FIELD_LABELS[f]).join(" and ")} first`
