@@ -6,36 +6,68 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription, DialogTrigger } from "@/components/ui/dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useState, useMemo, useRef } from "react";
 import { format } from "date-fns";
-import { Search, Plus, ImageOff, FileSpreadsheet, Loader2, Download, Upload, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, ArchiveIcon } from "lucide-react";
+import { Search, Plus, ImageOff, FileSpreadsheet, Loader2, Download, Upload, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, ArchiveIcon, ImageIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Progress } from "@/components/ui/progress";
+import { Label } from "@/components/ui/label";
 import { exportToExcel } from "@/lib/export-utils";
 import { exportImagesAsZip } from "@/lib/export-zip-utils";
 import { ExcelImportDialog } from "@/components/excel-import-dialog";
+import { ImportImagesDialog } from "@/components/import-images-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function extractBase64(dataUrl: string): string {
+  const match = dataUrl.match(/^data:image\/[a-z]+;base64,(.+)$/i);
+  return match ? match[1] : dataUrl;
+}
 
 function resolveFirstImageSrc(
   radiologyImageFilePathOrLink: string | null | undefined,
   radiologyImages: string | null | undefined,
 ): string | null {
-  // Prefer the single-link field; fall back to first entry in the JSON array
   const candidates: string[] = [];
-  if (radiologyImageFilePathOrLink) candidates.push(radiologyImageFilePathOrLink);
+  if (radiologyImageFilePathOrLink) {
+    // May be a single value, a JSON array, or a legacy "|"-joined string.
+    try {
+      const parsed = JSON.parse(radiologyImageFilePathOrLink);
+      if (Array.isArray(parsed)) parsed.forEach((p) => { if (p) candidates.push(String(p)); });
+      else candidates.push(String(radiologyImageFilePathOrLink));
+    } catch {
+      radiologyImageFilePathOrLink
+        .split("|")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .forEach((s) => candidates.push(s));
+    }
+  }
   if (radiologyImages) {
     try {
       const arr = JSON.parse(radiologyImages);
       if (Array.isArray(arr)) arr.forEach((p) => { if (p) candidates.push(String(p)); });
     } catch {
-      // raw string path (not a JSON array) — use as-is
       candidates.push(radiologyImages);
     }
   }
   for (const v of candidates) {
-    if (v.startsWith("/objects/")) return `/api/storage${v}`;
+    if (!v) continue;
     if (v.startsWith("http://") || v.startsWith("https://")) return v;
+    if (v.startsWith("/objects/")) return `/api/storage${v}`;
+    if (v.startsWith("radiology/")) return `/api/storage/objects/${v}`;
   }
   return null;
 }
@@ -83,6 +115,7 @@ export default function Patients() {
   const [isZipExporting, setIsZipExporting] = useState(false);
   const [zipProgress, setZipProgress] = useState<{ done: number; total: number } | null>(null);
   const [excelImportOpen, setExcelImportOpen] = useState(false);
+  const [imageImportOpen, setImageImportOpen] = useState(false);
 
   async function handleDeleteSelected() {
     setIsDeletingSelected(true);
@@ -227,48 +260,39 @@ export default function Patients() {
   async function handleExcelImportBatch(
     patients: Record<string, unknown>[]
   ): Promise<{ imported: number; failed: number; errors?: string[] }> {
-    let imported = 0;
-    let failed = 0;
-    const errors: string[] = [];
-
-    const createOne = async (rec: Record<string, unknown>) => {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12_000);
-      try {
-        const res = await fetch("/api/patients", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          signal: ctrl.signal,
-          body: JSON.stringify(rec),
-        });
-        clearTimeout(timer);
-        if (res.ok) {
-          imported++;
-        } else {
-          failed++;
-          const body = await res.json().catch(() => ({}));
-          errors.push(body.error ?? `HTTP ${res.status}`);
-        }
-      } catch (err) {
-        clearTimeout(timer);
-        failed++;
-        errors.push(
-          (err as Error).name === "AbortError"
-            ? "Timed out (>12 s)"
-            : (err as Error).message || "Network error"
-        );
+    try {
+      const res = await fetch("/api/patients/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ patients }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        return { imported: 0, failed: patients.length, errors: [data.error ?? "Import failed"] };
       }
-    };
-
-    // Process all rows in the received slice concurrently
-    await Promise.all(patients.map(createOne));
-
-    if (imported > 0) {
-      queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
-      queryClient.invalidateQueries({ queryKey: getGetPatientStatsQueryKey() });
+      
+      const imported = data.processed ?? 0;
+      const failed = data.failed ?? 0;
+      const errors: string[] = [];
+      
+      if (data.results) {
+        for (const r of data.results) {
+          if (r.errors) errors.push(...r.errors);
+        }
+      }
+      
+      if (imported > 0) {
+        queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+        queryClient.invalidateQueries({ queryKey: getGetPatientStatsQueryKey() });
+      }
+      
+      return { imported, failed, errors };
+    } catch (err) {
+      return { imported: 0, failed: patients.length, errors: [(err as Error).message] };
     }
-    return { imported, failed, errors };
   }
 
   function handleJsonExport() {
@@ -432,6 +456,18 @@ export default function Patients() {
               Import Excel
             </Button>
 
+            <Button variant="outline" size="sm" onClick={() => setImageImportOpen(true)}>
+              <ImageIcon className="w-4 h-4 mr-1.5" />
+              Import Images
+            </Button>
+
+            <ExcelImportDialog
+              open={excelImportOpen}
+              onOpenChange={setExcelImportOpen}
+              onImport={handleExcelImportBatch}
+            />
+            <ImportImagesDialog open={imageImportOpen} onOpenChange={setImageImportOpen} />
+
             <Button
               variant="outline"
               onClick={() => importInputRef.current?.click()}
@@ -528,7 +564,7 @@ export default function Patients() {
           )}
         </div>
 
-        <div className="rounded-md border overflow-x-auto">
+        <div className="bg-card rounded-md border overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -658,12 +694,6 @@ export default function Patients() {
           </Table>
         </div>
       </div>
-
-      <ExcelImportDialog
-        open={excelImportOpen}
-        onOpenChange={setExcelImportOpen}
-        onImport={handleExcelImportBatch}
-      />
     </Layout>
   );
 }

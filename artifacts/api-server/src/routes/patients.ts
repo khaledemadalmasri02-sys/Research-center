@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request, type Response } from "express";
 import { and, eq, ilike, or, sql, desc } from "drizzle-orm";
 import { db, patientsTable } from "@workspace/db";
 import {
@@ -13,15 +13,75 @@ import {
   DeletePatientParams,
   GetPatientStatsResponse,
 } from "@workspace/api-zod";
+import { s3Client, ObjectStorageService } from "../lib/objectStorage";
+import { radiologyImageService } from "../lib/radiologyImages";
+import { PutObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
 
 const router: IRouter = Router();
+const objectStorageService = new ObjectStorageService();
 
-function serializePatient<T extends { createdAt: Date | string; updatedAt: Date | string }>(p: T) {
-  return {
+async function discoverImagesByPatientId(patientId: string | undefined): Promise<string[]> {
+  if (!patientId) return [];
+  const bucket = objectStorageService.getBucket();
+  
+  const allKeys: string[] = [];
+  const normalizedId = patientId.replace(/^PAT/, '');
+  
+  try {
+    const response = await s3Client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: `radiology/`,
+    }));
+    
+    for (const obj of response.Contents ?? []) {
+      if (!obj.Key) continue;
+      
+      const hasPatPrefix = obj.Key.includes(`patient_${patientId}_`) || obj.Key.includes(`patient_PAT${normalizedId}_`);
+      const hasNumericOnly = obj.Key.includes(`patient_${normalizedId}_`);
+      
+      if (hasPatPrefix || hasNumericOnly || obj.Key.includes(`patient_${normalizedId}.`)) {
+        if (!allKeys.includes(obj.Key)) {
+          allKeys.push(obj.Key);
+        }
+      }
+      
+      const timestampMatch = obj.Key.match(new RegExp(`-patient_([^_]+)`, 'i'));
+      if (timestampMatch?.[1]) {
+        const filePatientId = timestampMatch[1];
+        if (filePatientId === patientId || filePatientId === normalizedId) {
+          if (!allKeys.includes(obj.Key)) {
+            allKeys.push(obj.Key);
+          }
+        }
+      }
+    }
+    
+    return allKeys;
+  } catch {
+    return [];
+  }
+}
+
+async function serializePatientWithImages<T extends { createdAt: Date | string; updatedAt: Date | string; patientId?: string; radiologyImageFilePathOrLink?: string | null; radiologyImages?: string | null }>(p: T): Promise<any> {
+  const base = {
     ...p,
     createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : p.createdAt,
     updatedAt: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : p.updatedAt,
   };
+
+  if ((!base.radiologyImageFilePathOrLink || !base.radiologyImages) && base.patientId) {
+    const discoveredImages = await discoverImagesByPatientId(base.patientId);
+    if (discoveredImages.length > 0) {
+      if (!base.radiologyImageFilePathOrLink) {
+        (base as any).radiologyImageFilePathOrLink = discoveredImages[0];
+      }
+      if (!base.radiologyImages) {
+        (base as any).radiologyImages = JSON.stringify(discoveredImages);
+      }
+    }
+  }
+
+  return base;
 }
 
 const VALID_COLLECTION_TYPES = new Set(["Normal", "Abnormal", "Suspicious"]);
@@ -54,6 +114,30 @@ function preprocess(body: unknown): Record<string, unknown> {
   }
 
   return out;
+}
+
+async function discoverImagesByImageId(imageId: string): Promise<string[]> {
+  if (!imageId) return [];
+  const bucket = objectStorageService.getBucket();
+  
+  const allKeys: string[] = [];
+  
+  try {
+    const response = await s3Client.send(new ListObjectsV2Command({
+      Bucket: bucket,
+      Prefix: `radiology/`,
+    }));
+    
+    for (const obj of response.Contents ?? []) {
+      if (obj.Key && obj.Key.includes(`patient_${imageId}_`)) {
+        allKeys.push(obj.Key);
+      }
+    }
+    
+    return allKeys;
+  } catch {
+    return [];
+  }
 }
 
 /** Coerce/sanitise patient data so type mismatches from Excel imports never
@@ -131,7 +215,7 @@ router.get("/patients", async (req, res): Promise<void> => {
     .from(patientsTable)
     .then((r) => r[0]?.count ?? 0);
 
-  res.json(ListPatientsResponse.parse({ patients: patients.map(serializePatient), total }));
+  res.json(ListPatientsResponse.parse({ patients: await Promise.all(patients.map(serializePatientWithImages)), total }));
 });
 
 router.post("/patients", async (req, res): Promise<void> => {
@@ -144,7 +228,7 @@ router.post("/patients", async (req, res): Promise<void> => {
 
   const [patient] = await db.insert(patientsTable).values(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data).returning();
 
-  res.status(201).json(GetPatientResponse.parse(serializePatient(patient!)));
+  res.status(201).json(GetPatientResponse.parse(await serializePatientWithImages(patient!)));
 });
 
 router.get("/patients/stats", async (_req, res): Promise<void> => {
@@ -232,7 +316,147 @@ router.get("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(GetPatientResponse.parse(serializePatient(patient)));
+  if ((!patient.radiologyImageFilePathOrLink || !patient.radiologyImages) && patient.patientId) {
+    const discoveredImages = await discoverImagesByPatientId(patient.patientId);
+    if (discoveredImages.length > 0) {
+      const updateData: Record<string, any> = {};
+      if (!patient.radiologyImageFilePathOrLink) {
+        updateData.radiologyImageFilePathOrLink = discoveredImages[0];
+      }
+      if (!patient.radiologyImages) {
+        updateData.radiologyImages = JSON.stringify(discoveredImages);
+      }
+      if (Object.keys(updateData).length > 0) {
+        await db
+          .update(patientsTable)
+          .set(updateData)
+          .where(eq(patientsTable.id, params.data.id));
+      }
+    }
+  }
+
+  const [updatedPatient] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.id, params.data.id));
+
+  res.json(GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)));
+});
+
+router.get("/patients/:id/images", async (req, res): Promise<void> => {
+  const params = GetPatientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [patient] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.id, params.data.id));
+
+  if (!patient) {
+    res.status(404).json({ error: "Patient not found" });
+    return;
+  }
+
+  const images = await radiologyImageService.listImages(patient.id);
+  res.json({ patientId: patient.patientId, images });
+});
+
+router.post("/patients/:id/images", async (req, res): Promise<void> => {
+  const params = GetPatientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [patient] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.id, params.data.id));
+
+  if (!patient) {
+    res.status(404).json({ error: "Patient not found" });
+    return;
+  }
+
+  const { imageId, objectKeys, objectKey, studyId } = req.body as {
+    imageId?: string;
+    objectKeys?: string[];
+    objectKey?: string;
+    studyId?: string;
+  };
+
+  let keys: string[] = [];
+  if (Array.isArray(objectKeys) && objectKeys.length > 0) {
+    keys = objectKeys.map((k) => String(k));
+  } else if (typeof objectKey === "string" && objectKey) {
+    keys = [objectKey];
+  } else if (typeof imageId === "string" && imageId) {
+    keys = await discoverImagesByPatientId(imageId);
+  }
+
+  if (keys.length === 0) {
+    res.status(400).json({ error: "imageId or objectKey(s) is required" });
+    return;
+  }
+
+  for (const key of keys) {
+    await radiologyImageService.addImage(patient.id, { objectKey: key, studyId: studyId ?? null });
+  }
+
+  const images = await radiologyImageService.listImages(patient.id);
+
+  const [updatedPatient] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.id, params.data.id));
+
+  res.json({
+    ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
+    images,
+  });
+});
+
+router.delete("/patients/:id/images/:imageId", async (req, res): Promise<void> => {
+  const params = GetPatientParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  const imageId = Number(req.params.imageId);
+  if (!Number.isInteger(imageId)) {
+    res.status(400).json({ error: "Invalid image id" });
+    return;
+  }
+
+  const [patient] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.id, params.data.id));
+
+  if (!patient) {
+    res.status(404).json({ error: "Patient not found" });
+    return;
+  }
+
+  const deleteObject =
+    req.query.deleteObject === "true" || (req.body as { deleteObject?: boolean })?.deleteObject === true;
+
+  await radiologyImageService.removeImage(imageId, { deleteObject });
+
+  const images = await radiologyImageService.listImages(patient.id);
+
+  const [updatedPatient] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.id, params.data.id));
+
+  res.json({
+    ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
+    images,
+  });
 });
 
 router.patch("/patients/:id", async (req, res): Promise<void> => {
@@ -249,8 +473,6 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Sanitise type mismatches (e.g. float age from Excel) then strip nulls
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updateData: Record<string, any> = Object.fromEntries(
     Object.entries(sanitize(parsed.data as Record<string, unknown>)).filter(([, v]) => v !== null)
   );
@@ -266,10 +488,76 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  res.json(UpdatePatientResponse.parse(serializePatient(patient)));
+  res.json(UpdatePatientResponse.parse(await serializePatientWithImages(patient)));
 });
 
-router.delete("/patients/:id", async (req, res): Promise<void> => {
+router.post("/patients/batch-import-images", async (req: Request, res: Response): Promise<void> => {
+  const { patientId, imageUrls } = req.body as { patientId?: string; imageUrls?: string[] };
+  
+  if (!patientId || !Array.isArray(imageUrls) || imageUrls.length === 0) {
+    res.status(400).json({ error: "patientId and imageUrls are required" });
+    return;
+  }
+
+  try {
+    const [patient] = await db
+      .select()
+      .from(patientsTable)
+      .where(eq(patientsTable.patientId, patientId));
+
+    if (!patient) {
+      res.status(404).json({ error: `Patient with ID ${patientId} not found` });
+      return;
+    }
+
+    const uploadedPaths: string[] = [];
+    const failed: string[] = [];
+
+    for (const url of imageUrls) {
+      if (!isImageUrl(url)) {
+        failed.push(`${url}: not a valid image URL`);
+        continue;
+      }
+
+      const newPath = await fetchAndUploadImage(url, patientId, patient.patientName || "Unknown");
+      if (newPath) {
+        uploadedPaths.push(newPath);
+      } else {
+        failed.push(url);
+      }
+    }
+
+    if (uploadedPaths.length > 0) {
+      const updateData: Record<string, any> = {
+        radiologyImages: JSON.stringify([...(patient.radiologyImages ? JSON.parse(patient.radiologyImages) : []), ...uploadedPaths]),
+        updatedAt: new Date(),
+      };
+      
+      if (!patient.radiologyImageFilePathOrLink && uploadedPaths.length > 0) {
+        updateData.radiologyImageFilePathOrLink = uploadedPaths[0];
+      }
+      
+      const [updatedPatient] = await db
+        .update(patientsTable)
+        .set(updateData)
+        .where(eq(patientsTable.id, patient.id))
+        .returning();
+
+      res.json({
+        uploaded: uploadedPaths.length,
+        failed: failed.length,
+        failedUrls: failed,
+        patient: GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
+      });
+    } else {
+      res.json({ uploaded: 0, failed: failed.length, failedUrls: failed });
+    }
+  } catch (err) {
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+router.delete("/patients/:id", async (req, res: Response): Promise<void> => {
   const params = DeletePatientParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -288,5 +576,149 @@ router.delete("/patients/:id", async (req, res): Promise<void> => {
 
   res.sendStatus(204);
 });
+
+function isImageUrl(path: string): boolean {
+  if (!path) return false;
+  const trimmed = path.trim().toLowerCase();
+  return trimmed.startsWith("http://") || trimmed.startsWith("https://");
+}
+
+function guessExtension(url: string, contentType: string | null): string {
+  if (contentType) {
+    if (contentType.includes("png")) return "png";
+    if (contentType.includes("gif")) return "gif";
+    if (contentType.includes("webp")) return "webp";
+    if (contentType.includes("jpeg") || contentType.includes("jpg")) return "jpg";
+  }
+  const m = url.match(/\.(png|jpg|jpeg|gif|webp)(\?|$)/i);
+  if (m) return m[1]!.toLowerCase().replace("jpeg", "jpg");
+  return "jpg";
+}
+
+interface BatchPatientImportData {
+  patients: Record<string, unknown>[];
+}
+
+router.post("/patients/batch", async (req: Request, res: Response): Promise<void> => {
+  const { patients } = req.body as BatchPatientImportData;
+  
+  if (!Array.isArray(patients) || patients.length === 0) {
+    res.status(400).json({ error: "patients array is required" });
+    return;
+  }
+
+  const results: { id?: number; errors?: string[]; updatedImagePaths?: string[] }[] = [];
+  const batchSize = 5;
+  
+  for (let i = 0; i < patients.length; i += batchSize) {
+    const batch = patients.slice(i, i + batchSize);
+    
+    for (const rawPatient of batch) {
+      const result: { id?: number; errors?: string[]; updatedImagePaths?: string[] } = {};
+      
+      try {
+        const processed = preprocess(rawPatient);
+        const updatedPaths: string[] = [];
+        
+        if (isImageUrl(processed.radiologyImageFilePathOrLink as string)) {
+          const newPath = await fetchAndUploadImage(processed.radiologyImageFilePathOrLink as string, processed.patientId as string, processed.patientName as string);
+          if (newPath) {
+            processed.radiologyImageFilePathOrLink = newPath;
+            updatedPaths.push(newPath);
+          }
+        } else if (processed.patientId && !processed.radiologyImageFilePathOrLink) {
+          const existing = await discoverImagesByPatientId(processed.patientId as string);
+          if (existing.length > 0) {
+            processed.radiologyImageFilePathOrLink = existing[0];
+            updatedPaths.push(...existing);
+          }
+        }
+        
+        if (!processed.radiologyImageFilePathOrLink && processed.imageId) {
+          const existing = await discoverImagesByImageId(processed.imageId as string);
+          if (existing.length > 0) {
+            processed.radiologyImageFilePathOrLink = existing[0];
+            updatedPaths.push(...existing);
+          }
+        }
+        
+        if (processed.radiologyImages) {
+          try {
+            const paths = JSON.parse(processed.radiologyImages as string);
+            if (Array.isArray(paths)) {
+              const newPaths: string[] = [];
+              for (const path of paths) {
+                if (isImageUrl(path)) {
+                  const newPath = await fetchAndUploadImage(path, processed.patientId as string, processed.patientName as string);
+                  if (newPath) {
+                    newPaths.push(newPath);
+                    updatedPaths.push(newPath);
+                  } else {
+                    newPaths.push(path);
+                  }
+                } else {
+                  newPaths.push(path);
+                }
+              }
+              processed.radiologyImages = JSON.stringify(newPaths);
+            }
+          } catch {
+          }
+        }
+        
+        const parsed = CreatePatientBody.safeParse(processed);
+        if (!parsed.success) {
+          result.errors = [parsed.error.message];
+        } else {
+          const [patient] = await db.insert(patientsTable).values(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data).returning();
+          result.id = patient!.id;
+          if (updatedPaths.length > 0) {
+            result.updatedImagePaths = updatedPaths;
+          }
+        }
+      } catch (err) {
+        result.errors = [(err as Error).message];
+      }
+      
+      results.push(result);
+    }
+  }
+
+  res.json({
+    results,
+    processed: results.filter(r => r.id).length,
+    failed: results.filter(r => r.errors).length,
+  });
+});
+
+async function fetchAndUploadImage(url: string, patientId: string | undefined, patientName: string | undefined): Promise<string | null> {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    if (!contentType.startsWith("image/")) return null;
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const body = new Uint8Array(arrayBuffer);
+    
+    const ext = guessExtension(url, contentType);
+    const baseName = patientId ? `patient_${patientId}` : "imported";
+    const objectId = `${Date.now()}-${baseName}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const objectKey = `radiology/${objectId}`;
+    
+    const bucket = objectStorageService.getBucket();
+    await s3Client.send(new PutObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+      Body: body,
+      ContentType: contentType,
+    }));
+    
+    return objectKey;
+  } catch {
+    return null;
+  }
+}
 
 export default router;
