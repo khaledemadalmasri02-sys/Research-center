@@ -1,4 +1,3 @@
-import ExcelJS from "exceljs";
 import { format } from "date-fns";
 import { parseVitals } from "@/lib/vitals-utils";
 
@@ -71,53 +70,64 @@ const WHITE     = "FFFFFFFF";
 const TEAL_LITE = "FFF0FDFA";
 const BORDER_C  = "FFE2E8F0";
 
-function borderAll(cell: ExcelJS.Cell) {
-  const s: ExcelJS.Border = { style: "thin", color: { argb: BORDER_C } };
-  cell.border = { top: s, bottom: s, left: s, right: s };
-}
-
 const BASE_COLS = [
-  { header: "Collection Name",             key: "collectionName",     width: 22 },
-  { header: "Date of Collection",          key: "collectionDate",     width: 18 },
-  { header: "Collection Type",             key: "collectionType",     width: 16 },
-  { header: "Patient ID",                  key: "patientId",          width: 14 },
-  { header: "Patient Name",                key: "patientName",        width: 20 },
-  { header: "Age",                         key: "age",                width: 7  },
-  { header: "Sex",                         key: "sex",                width: 10 },
-  { header: "Date of Visit",               key: "dateOfVisit",        width: 15 },
-  { header: "Chief Complaint",             key: "chiefComplaint",     width: 28 },
+  { header: "Collection Name",               key: "collectionName",       width: 22 },
+  { header: "Date of Collection",          key: "collectionDate",       width: 18 },
+  { header: "Collection Type",             key: "collectionType",       width: 16 },
+  { header: "Patient ID",                  key: "patientId",            width: 14 },
+  { header: "Patient Name",                key: "patientName",          width: 20 },
+  { header: "Age",                         key: "age",                  width: 7  },
+  { header: "Sex",                         key: "sex",                  width: 10 },
+  { header: "Date of Visit",               key: "dateOfVisit",          width: 15 },
+  { header: "Chief Complaint",             key: "chiefComplaint",       width: 28 },
   { header: "BP",                           key: "vitalBP",            width: 13 },
   { header: "RR",                           key: "vitalRR",            width: 10 },
   { header: "Temperature",                  key: "vitalTemp",          width: 13 },
   { header: "HR",                           key: "vitalHR",            width: 10 },
   { header: "O2 Sat",                       key: "vitalO2",            width: 10 },
-  { header: "History (Trauma)",            key: "historyTrauma",      width: 25 },
-  { header: "Mechanism of Injury",         key: "mechanism",          width: 25 },
-  { header: "Signs & Symptoms (Trauma)",   key: "signsTrauma",        width: 28 },
-  { header: "History (Medical)",           key: "historyMedical",     width: 25 },
-  { header: "Signs & Symptoms (Medical)",  key: "signsMedical",       width: 28 },
-  { header: "Risk Factors",                key: "riskFactors",        width: 22 },
-  { header: "Provisional Diagnosis",       key: "provisionalDx",      width: 28 },
-  { header: "Emergency Report",            key: "emergencyReport",    width: 28 },
-  { header: "AI Prediction",               key: "aiPrediction",       width: 22 },
-  { header: "Final Diagnosis (EN)",        key: "finalDxEn",          width: 28 },
-  { header: "Final Diagnosis (AR)",        key: "finalDxAr",          width: 28 },
-  { header: "Notes",                       key: "notes",              width: 25 },
+  { header: "History (Trauma)",            key: "historyTrauma",        width: 25 },
+  { header: "Mechanism of Injury",         key: "mechanism",            width: 25 },
+  { header: "Signs & Symptoms (Trauma)",   key: "signsTrauma",          width: 28 },
+  { header: "History (Medical)",           key: "historyMedical",       width: 25 },
+  { header: "Signs & Symptoms (Medical)",  key: "signsMedical",         width: 28 },
+  { header: "Risk Factors",                key: "riskFactors",          width: 22 },
+  { header: "Provisional Diagnosis",       key: "provisionalDx",        width: 28 },
+  { header: "Emergency Report",            key: "emergencyReport",      width: 28 },
+  { header: "AI Prediction",               key: "aiPrediction",         width: 22 },
+  { header: "Final Diagnosis (EN)",        key: "finalDxEn",            width: 28 },
+  { header: "Final Diagnosis (AR)",        key: "finalDxAr",            width: 28 },
+  { header: "Notes",                       key: "notes",                width: 25 },
 ];
 
 const IMG_H = 90;
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function borderAll(cell: any) {
+  const s: any = { style: "thin", color: { argb: BORDER_C } };
+  cell.border = { top: s, bottom: s, left: s, right: s };
+}
+
+let ExcelJS: any = null;
+
+async function loadExcelJS(): Promise<any> {
+  if (ExcelJS) return ExcelJS;
+  ExcelJS = await import("exceljs");
+  return ExcelJS;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function exportToExcel(
   patients: ExportPatient[],
   filename = "patients"
 ): Promise<void> {
-  // Count max images any patient has (use reduce to avoid spread-args limit)
+  const wb = await loadExcelJS();
+
   const maxImages = patients.reduce(
-    (acc, p) => Math.max(acc, parseImagePaths(p).length),
+    (acc: number, p: ExportPatient) => Math.max(acc, parseImagePaths(p).length),
     1
   );
 
-  const workbook = new ExcelJS.Workbook();
+  const workbook = new wb.Workbook();
   workbook.creator = "MedResearch";
   workbook.created = new Date();
 
@@ -126,21 +136,19 @@ export async function exportToExcel(
     pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
   });
 
-  // Build the full column list: base cols + one preview col per image
-  const imgPreviewCols = Array.from({ length: maxImages }, (_, i) => ({
+  const imgPreviewCols = Array.from({ length: maxImages }, (_, i: number) => ({
     header: maxImages === 1 ? "Radiology Image" : `Image ${i + 1}`,
     key: `img_${i}`,
     width: 24,
   }));
 
-  ws.columns = [...BASE_COLS, ...imgPreviewCols] as unknown as ExcelJS.Column[];
+  ws.columns = [...BASE_COLS, ...imgPreviewCols];
 
   const totalCols = BASE_COLS.length + maxImages;
 
-  // Style header row — includeEmpty so every defined column cell is styled
   const hdr = ws.getRow(1);
   hdr.height = 30;
-  hdr.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+  hdr.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
     if (colNumber > totalCols) return;
     cell.font = { bold: true, color: { argb: WHITE }, size: 10, name: "Calibri" };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TEAL } };
@@ -150,10 +158,9 @@ export async function exportToExcel(
 
   for (let i = 0; i < patients.length; i++) {
     const p = patients[i]!;
-    const rowIdx = i + 2; // 1-indexed, row 1 is header
+    const rowIdx = i + 2;
     const imgPaths = parseImagePaths(p);
 
-    // Build image placeholder cells (empty string so ExcelJS creates the cells)
     const imgCellData: Record<string, string> = {};
     for (let j = 0; j < maxImages; j++) {
       imgCellData[`img_${j}`] = "";
@@ -191,7 +198,7 @@ export async function exportToExcel(
 
     row.height = IMG_H;
 
-    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+    row.eachCell({ includeEmpty: true }, (cell: any, colNumber: number) => {
       if (colNumber > totalCols) return;
       if (i % 2 === 0) {
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: TEAL_LITE } };
@@ -200,14 +207,13 @@ export async function exportToExcel(
       borderAll(cell);
     });
 
-    // Embed each image in its own column
     for (let imgIdx = 0; imgIdx < imgPaths.length; imgIdx++) {
       const src = toFetchUrl(imgPaths[imgIdx]!);
       const img = await fetchImageBuffer(src);
       if (img) {
         const imgId = workbook.addImage({ buffer: img.buffer, extension: img.extension });
         ws.addImage(imgId, {
-          tl: { col: BASE_COLS.length + imgIdx, row: rowIdx - 1 } as never,
+          tl: { col: BASE_COLS.length + imgIdx, row: rowIdx - 1 },
           ext: { width: 150, height: IMG_H - 6 },
           editAs: "oneCell",
         });

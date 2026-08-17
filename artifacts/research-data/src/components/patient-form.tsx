@@ -217,7 +217,9 @@ function MultiRadiologyUploader({
       {paths.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           {paths.map((p, idx) => {
-            const src = p.startsWith("/objects/") ? `/api/storage${p}` : p;
+            const src = p.startsWith("http") 
+      ? p 
+      : `/api/storage/objects/${p}`;
             const isBroken = brokenPaths.has(p);
             return (
               <div

@@ -2,10 +2,10 @@ import { Layout } from "@/components/layout";
 import { useGetPatient, getGetPatientQueryKey, useDeletePatient, getListPatientsQueryKey, getGetPatientStatsQueryKey, useListPatients } from "@workspace/api-client-react";
 import { useParams, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Edit, Trash2, Printer, ArrowLeft, ArrowRight } from "lucide-react";
+import { Edit, Trash2, Printer, ArrowLeft, ArrowRight, UploadCloud, Image as ImageIcon, Loader2 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format } from "date-fns";
-import { useMemo } from "react";
+import { useMemo, useState, useRef } from "react";
 import { 
   AlertDialog, 
   AlertDialogAction, 
@@ -20,6 +20,9 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { parseVitals, VITAL_DEFS } from "@/lib/vitals-utils";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 function VitalsDisplay({ value }: { value: string | null | undefined }) {
   const vitals = parseVitals(value);
@@ -65,8 +68,11 @@ function RadiologyGallery({ patient }: { patient: any }) {
 
   if (allPaths.length === 0) return null;
 
-  const toSrc = (p: string) =>
-    p.startsWith("/objects/") ? `/api/storage${p}` : p;
+  function toSrc(p: string) {
+    if (p.startsWith("http://") || p.startsWith("https://")) return p;
+    if (p.startsWith("/")) return p;
+    return `/api/storage/objects/${p}`;
+  }
 
   return (
     <div className="bg-card border rounded-lg p-6">
@@ -191,6 +197,7 @@ export default function PatientDetail() {
               <Button variant="outline" onClick={() => setLocation(`/patients/${patient.id}/edit`)}>
                 <Edit className="w-4 h-4 mr-2" /> Edit
               </Button>
+              <ImportImagesDialog patientId={patient.patientId} />
               <AlertDialog>
                 <AlertDialogTrigger asChild>
                   <Button variant="destructive">
@@ -331,8 +338,170 @@ export default function PatientDetail() {
           </div>
         ) : (
           <div>Patient not found.</div>
-        )}
-      </div>
-    </Layout>
+)}
+        </div>
+      </Layout>
+  );
+}
+
+function ImportImagesDialog({ patientId }: { patientId: string }) {
+  const [open, setOpen] = useState(false);
+  const [uploadInput, setUploadInput] = useState("");
+  const [fileInput, setFileInput] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const uploadRef = useRef<HTMLInputElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function handleUrlUpload() {
+    const lines = uploadInput.split('\n').map(l => l.trim()).filter(l => l);
+    if (lines.length === 0) {
+      toast({ title: "Enter at least one image URL", variant: "destructive" });
+      return;
+    }
+
+    setIsUploading(true);
+    try {
+      const res = await fetch("/api/patients/batch-import-images", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", credentials: "include" },
+        body: JSON.stringify({ patientId, imageUrls: lines }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Upload failed");
+      }
+
+      toast({ 
+        title: "Upload Complete", 
+        description: data.uploaded > 0 
+          ? `${data.uploaded} image(s) added to patient record`
+          : "No images uploaded"
+      });
+      
+      setOpen(false);
+      setUploadInput("");
+      queryClient.invalidateQueries({ queryKey: getGetPatientQueryKey(Number(patientId)) });
+    } catch (err) {
+      toast({ title: "Upload Failed", description: (err as Error).message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+    }
+  }
+
+  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      for (const file of files) {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+        const base64Match = dataUrl.match(/^data:image\/[a-z]+;base64,(.+)$/i);
+        if (!base64Match) continue;
+        const base64Data = base64Match[1];
+
+        await fetch("/api/storage/upload-file", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", credentials: "include" },
+          body: JSON.stringify({
+            patientId,
+            filename: file.name,
+            contentType: file.type,
+            fileData: base64Data,
+          }),
+        });
+      }
+
+      toast({ 
+        title: "Upload Complete", 
+        description: `${files.length} file(s) uploaded` 
+      });
+      
+      setOpen(false);
+      setFileInput("");
+      queryClient.invalidateQueries({ queryKey: getGetPatientQueryKey(Number(patientId)) });
+    } catch (err) {
+      toast({ title: "Upload Failed", description: (err as Error).message, variant: "destructive" });
+    } finally {
+      setIsUploading(false);
+      if (e.target.files) e.target.files = null;
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" size="sm">
+          <ImageIcon className="w-4 h-4 mr-1.5" />
+          Import Images
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Import Images</DialogTitle>
+          <DialogDescription>
+            Add images to {patientId}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4 py-4">
+          <div>
+            <Label htmlFor="url-input" className="text-sm font-medium">Image URLs</Label>
+            <textarea
+              id="url-input"
+              placeholder="https://example.com/image1.png&#10;https://example.com/image2.jpg"
+              className="mt-1 w-full h-20 px-3 py-2 text-sm border rounded-md font-mono"
+              value={uploadInput}
+              onChange={(e) => setUploadInput(e.target.value)}
+              disabled={isUploading}
+            />
+            <p className="text-xs text-muted-foreground mt-1">One URL per line</p>
+          </div>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="border-t border-dashed border-border" />
+            </div>
+            <span className="relative px-2 text-xs text-muted-foreground bg-popover">
+              or
+            </span>
+          </div>
+
+          <div>
+            <Label htmlFor="file-input" className="text-sm font-medium">Upload Files</Label>
+            <input
+              id="file-input"
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              multiple
+              className="mt-1 w-full"
+              onChange={handleFileUpload}
+              disabled={isUploading}
+            />
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={isUploading}>
+            Cancel
+          </Button>
+          <Button onClick={handleUrlUpload} disabled={isUploading || !uploadInput.trim()}>
+            {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
+            Upload URLs
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

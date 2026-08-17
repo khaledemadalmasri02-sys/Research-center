@@ -1,0 +1,55 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Production builds
+dist
+**/dist
+
+# Source maps
+*.map
+
+# Tests
+tests
+**/*.test.ts
+**/*.test.js
+
+# Development files
+*.dev.ts
+*.spec.ts
+.vite
+.vercel
+.netlify
+.gatsby
+.next
+.nuxt
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git
+.gitignore
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Lock files (keep pnpm-lock.yaml for builds)
+package-lock.json
+yarn.lock

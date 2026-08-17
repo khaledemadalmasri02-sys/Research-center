@@ -1,0 +1,9 @@
+tunnel: research-tunnel
+
+ingress:
+  - hostname: research-center.fit
+    service: http://localhost:8787
+
+# For local development with Worker
+# - hostname: localhost.research-center.fit
+#   service: http://localhost:8787

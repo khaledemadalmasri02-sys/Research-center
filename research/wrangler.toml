@@ -1,0 +1,66 @@
+name = "research"
+compatibility_date = "2025-04-01"
+main = "src/index.ts"
+workers_dev = false
+account_id = "1c6980a08850bab43d5a92964a29a37f"
+
+# Static Assets: Cloudflare serves the SPA directly (cached at the edge).
+# Only /api/* requests are sent to the Worker; everything else (HTML, JS, CSS,
+# images, SPA client-side routes) is handled by the assets layer, including the
+# single-page-application fallback to index.html.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "126b47b7084343ca8fe4510a9b33c800"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "mednexus-research"
+database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
+
+[vars]
+APP_USERNAME = "Khaled"
+APP_PASSWORD_HASH = "REDACTED_BCRYPT_HASH"
+S3_BUCKET = "mednexus"
+S3_REGION = "auto"
+PUBLIC_API_URL = "/api"
+
+[env.production]
+name = "research"
+logpush = true
+route = "research-center.fit/*"
+
+[env.production.assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
+
+[[env.production.kv_namespaces]]
+binding = "SESSIONS"
+id = "126b47b7084343ca8fe4510a9b33c800"
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "mednexus-research"
+database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
+
+[env.production.vars]
+APP_USERNAME = "Khaled"
+APP_PASSWORD_HASH = "REDACTED_BCRYPT_HASH"
+S3_BUCKET = "mednexus"
+S3_REGION = "auto"
+PUBLIC_API_URL = "/api"
+
+# S3 / MinIO credentials are SECRETS — set them once with:
+#   wrangler secret put --env production S3_ENDPOINT
+#   wrangler secret put --env production S3_ACCESS_KEY_ID
+#   wrangler secret put --env production S3_SECRET_ACCESS_KEY
+#   wrangler secret put --env production SESSION_SECRET
+#   wrangler secret put --env production GROQ_API_KEY   # optional, for voice
+# (Do NOT put secrets in this file.)

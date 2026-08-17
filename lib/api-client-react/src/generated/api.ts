@@ -17,6 +17,7 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  AttachPatientImageByIdBody,
   CreatePatientBody,
   ErrorEnvelope,
   ErrorResponse,
@@ -25,6 +26,8 @@ import type {
   ListPatientsResponse,
   Patient,
   PatientStats,
+  SearchImagesBody,
+  SearchImagesResponse,
   UpdatePatientBody,
   UploadUrlRequest,
   UploadUrlResponse,
@@ -892,3 +895,164 @@ export function useGetStorageObject<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+export const getAttachPatientImageByIdUrl = (id: number) => {
+  return `/api/patients/${id}/images`;
+};
+
+export const attachPatientImageById = async (
+  id: number,
+  attachPatientImageByIdBody: AttachPatientImageByIdBody,
+  options?: RequestInit,
+): Promise<Patient> => {
+  return customFetch<Patient>(getAttachPatientImageByIdUrl(id), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(attachPatientImageByIdBody),
+  });
+};
+
+export const getAttachPatientImageByIdMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof attachPatientImageById>>,
+    TError,
+    { id: number; data: BodyType<AttachPatientImageByIdBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof attachPatientImageById>>,
+  TError,
+  { id: number; data: BodyType<AttachPatientImageByIdBody> },
+  TContext
+> => {
+  const mutationKey = ["attachPatientImageById"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof attachPatientImageById>>,
+    { id: number; data: BodyType<AttachPatientImageByIdBody> }
+  > = (props) => {
+    const { id, data } = props ?? {};
+
+    return attachPatientImageById(id, data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type AttachPatientImageByIdMutationResult = NonNullable<
+  Awaited<ReturnType<typeof attachPatientImageById>>
+>;
+export type AttachPatientImageByIdMutationBody = BodyType<AttachPatientImageByIdBody>;
+export type AttachPatientImageByIdMutationError = ErrorType<ErrorResponse>;
+
+export const useAttachPatientImageById = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof attachPatientImageById>>,
+    TError,
+    { id: number; data: BodyType<AttachPatientImageByIdBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof attachPatientImageById>>,
+  TError,
+  { id: number; data: BodyType<AttachPatientImageByIdBody> },
+  TContext
+> => {
+  return useMutation(getAttachPatientImageByIdMutationOptions(options));
+};
+
+export const getSearchImagesUrl = () => {
+  return `/api/storage/images/search`;
+};
+
+export const searchImages = async (
+  searchImagesBody: SearchImagesBody,
+  options?: RequestInit,
+): Promise<SearchImagesResponse> => {
+  return customFetch<SearchImagesResponse>(getSearchImagesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(searchImagesBody),
+  });
+};
+
+export const getSearchImagesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchImages>>,
+    TError,
+    { data: BodyType<SearchImagesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof searchImages>>,
+  TError,
+  { data: BodyType<SearchImagesBody> },
+  TContext
+> => {
+  const mutationKey = ["searchImages"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof searchImages>>,
+    { data: BodyType<SearchImagesBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return searchImages(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SearchImagesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof searchImages>>
+>;
+export type SearchImagesMutationBody = BodyType<SearchImagesBody>;
+export type SearchImagesMutationError = ErrorType<ErrorResponse>;
+
+export const useSearchImages = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof searchImages>>,
+    TError,
+    { data: BodyType<SearchImagesBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof searchImages>>,
+  TError,
+  { data: BodyType<SearchImagesBody> },
+  TContext
+> => {
+  return useMutation(getSearchImagesMutationOptions(options));
+};

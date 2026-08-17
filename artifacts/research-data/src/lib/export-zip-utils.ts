@@ -1,4 +1,3 @@
-import JSZip from "jszip";
 import { format } from "date-fns";
 
 export type ZipPatient = {
@@ -9,8 +8,6 @@ export type ZipPatient = {
 };
 
 type ProgressCallback = (done: number, total: number) => void;
-
-// ── helpers ──────────────────────────────────────────────────────────────────
 
 function parseImagePaths(p: ZipPatient): string[] {
   if (p.radiologyImages) {
@@ -28,7 +25,6 @@ function toFetchUrl(path: string): string {
   return path;
 }
 
-/** Detect extension from Content-Type or URL, defaulting to "jpg". */
 function guessExtension(url: string, contentType: string | null): string {
   if (contentType) {
     if (contentType.includes("png"))  return "png";
@@ -56,30 +52,25 @@ async function fetchImage(
   }
 }
 
-// ── main export ───────────────────────────────────────────────────────────────
+let JSZip: any = null;
 
-/**
- * Build and download a ZIP file that contains every radiology image for the
- * given patients.  Each patient gets its own folder named by Patient ID:
- *
- *   {patientId}/
- *     image_01.jpg
- *     image_02.png
- *     …
- *
- * Returns { downloaded, skipped } counts.
- */
+async function loadJSZip(): Promise<any> {
+  if (JSZip) return JSZip;
+  const module = await import("jszip");
+  JSZip = module.default ?? module;
+  return JSZip;
+}
+
 export async function exportImagesAsZip(
   patients: ZipPatient[],
   onProgress?: ProgressCallback
 ): Promise<{ downloaded: number; skipped: number }> {
-  const zip = new JSZip();
+  const zip = new (await loadJSZip())();
 
-  // Count total images up-front for accurate progress
   const allImages: Array<{ patient: ZipPatient; path: string; idx: number }> = [];
   for (const p of patients) {
     const paths = parseImagePaths(p);
-    paths.forEach((path, idx) => allImages.push({ patient: p, path, idx }));
+    paths.forEach((path: string, idx: number) => allImages.push({ patient: p, path, idx }));
   }
 
   let downloaded = 0;
@@ -87,7 +78,6 @@ export async function exportImagesAsZip(
 
   onProgress?.(0, allImages.length);
 
-  // Pre-compute per-patient image counts so we know whether to add (N) suffixes
   const patientImageCounts = new Map<string, number>();
   for (const p of patients) {
     const id = (p.patientId ?? "unknown").replace(/[<>:"/\\|?*]/g, "_");
@@ -99,8 +89,6 @@ export async function exportImagesAsZip(
     const id = (patient.patientId ?? "unknown").replace(/[<>:"/\\|?*]/g, "_");
     const total = patientImageCounts.get(id) ?? 1;
 
-    // Single image → "PatientID.ext"
-    // Multiple images → "PatientID(1).ext", "PatientID(2).ext", …
     const baseName = total === 1 ? id : `${id}(${idx + 1})`;
 
     if (result) {
@@ -114,7 +102,6 @@ export async function exportImagesAsZip(
     onProgress?.(downloaded + skipped, allImages.length);
   }
 
-  // Add a simple manifest at the root
   const manifest = patients
     .map((p) => {
       const paths = parseImagePaths(p);

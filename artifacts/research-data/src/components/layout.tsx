@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Activity, LayoutDashboard, Users, UserPlus, LogOut } from "lucide-react";
+import { Activity, LayoutDashboard, Users, UserPlus, LogOut, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ export function Layout({ children }: LayoutProps) {
   const navigation = [
     { name: "Dashboard", href: "/", icon: LayoutDashboard },
     { name: "Patients", href: "/patients", icon: Users },
+    { name: "Database", href: "/database", icon: Database },
     { name: "New Patient", href: "/patients/new", icon: UserPlus },
   ];
 

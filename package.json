@@ -6,11 +6,34 @@
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --filter \"./research/**\" --if-present run typecheck",
+    "dev": "bash scripts/dev.sh",
+    "dev:apps": "PORT=3000 npx tsx artifacts/api-server/src/index.ts & PORT=3003 npx vite dev artifacts/mockup-sandbox --host 0.0.0.0 & PORT=3004 npx vite dev artifacts/research-data --host 0.0.0.0 & wait",
+    "dev:s3": "bash scripts/docker-up.sh",
+    "docker-up": "docker compose up -d",
+    "docker-down": "docker compose down",
+    "docker-logs": "docker compose logs --follow",
+    "wait-for-services": "bash -c 'echo \"Waiting for PostgreSQL...\" && until docker-compose exec -T postgres pg_isready -U postgres -d mednexus 2>/dev/null; do sleep 1; done && echo \"Waiting for MinIO...\" && until curl -sf http://localhost:9000/minio/health/live; do sleep 1; done && echo \"Setting up S3 buckets...\" && bash scripts/dev-s3-buckets.sh && echo \"All services ready!\"'",
+    "stop": "docker compose down",
+    "build:frontend": "cd artifacts/research-data && BASE_PATH=/ pnpm install && pnpm run build",
+    "deploy": "bash scripts/deploy.sh",
+    "deploy:worker": "pnpm -C research install && pnpm -C research exec wrangler deploy --env production",
+    "db:migrate": "bash scripts/db-migrate.sh",
+    "db:migrate:local": "cd research && wrangler d1 execute mednexus-research --local --file=./schema.sql",
+    "tunnel": "bash scripts/deploy.sh",
+    "tunnel:run": "pnpm run deploy:worker",
+    "tunnel:setup": "cd research && pnpm install",
+    "ngrok": "bash scripts/ngrok-storage.sh",
+    "run:all": "pnpm dev && pnpm run tunnel:run && pnpm run tunnel"
   },
   "private": true,
   "devDependencies": {
+    "prettier": "^3.8.1",
+    "tsx": "catalog:",
     "typescript": "~5.9.2",
-    "prettier": "^3.8.1"
+    "vite": "catalog:"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
   }
 }

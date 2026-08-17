@@ -89,6 +89,7 @@ export const CreatePatientBody = zod.object({
   aiPredictionOutput: zod.string().nullish(),
   finalConfirmedDiagnosisAr: zod.string().nullish(),
   finalConfirmedDiagnosis: zod.string().nullish(),
+  imageId: zod.string().nullish(),
   notes: zod.string().nullish(),
 });
 
@@ -263,4 +264,70 @@ export const GetPublicObjectParams = zod.object({
  */
 export const GetStorageObjectParams = zod.object({
   objectPath: zod.coerce.string(),
+});
+
+export const BatchImportPatientsBody = zod.object({
+  patients: zod.array(zod.record(zod.unknown())),
+});
+
+export const BatchImportPatientsResponse = zod.object({
+  results: zod.array(
+    zod.object({
+      id: zod.number().optional(),
+      errors: zod.array(zod.string()).optional(),
+      updatedImagePaths: zod.array(zod.string()).optional(),
+    })
+  ),
+  processed: zod.number(),
+  failed: zod.number(),
+});
+
+export const ImportImageFromUrlRequest = zod.object({
+  url: zod.string().url(),
+  filename: zod.string().optional(),
+});
+
+export const ImportImageFromUrlResponse = zod.object({
+  objectPath: zod.string(),
+  contentType: zod.string(),
+});
+
+export const ImportImageByPatientRequest = zod.object({
+  url: zod.string().url(),
+  filename: zod.string().optional(),
+  patientId: zod.string().optional(),
+});
+
+export const ImportImageByPatientResponse = zod.object({
+  objectPath: zod.string(),
+  patientImages: zod.array(zod.string()),
+});
+
+export const PatientImagesParams = zod.object({
+  patientId: zod.string(),
+});
+
+export const PatientImagesResponse = zod.object({
+  patientId: zod.string(),
+  images: zod.array(zod.string()),
+});
+
+export const AttachPatientImageByIdBody = zod.object({
+  imageId: zod.string(),
+});
+
+export const AttachPatientImageByIdParams = zod.object({
+  id: zod.coerce.number(),
+});
+
+export const SearchImagesBody = zod.object({
+  identifier: zod.string().optional(),
+  patientId: zod.string().optional(),
+  filename: zod.string().optional(),
+});
+
+export const SearchImagesResponse = zod.object({
+  objectPath: zod.string(),
+  patientImages: zod.array(zod.string()).optional(),
+  attachmentPatientId: zod.string().optional(),
 });

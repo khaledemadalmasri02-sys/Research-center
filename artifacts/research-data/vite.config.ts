@@ -2,51 +2,35 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
-import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
-import { nodePolyfills } from "vite-plugin-node-polyfills";
-
-const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    "PORT environment variable is required but was not provided.",
-  );
-}
-
-const port = Number(rawPort);
-
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
-
-const basePath = process.env.BASE_PATH;
-
-if (!basePath) {
-  throw new Error(
-    "BASE_PATH environment variable is required but was not provided.",
-  );
-}
 
 export default defineConfig({
-  base: basePath,
+  base: process.env.BASE_PATH || "/",
   plugins: [
-    nodePolyfills({ globals: { Buffer: true, process: true }, protocolImports: false }),
     react(),
     tailwindcss(),
-    runtimeErrorOverlay(),
-    ...(process.env.NODE_ENV !== "production" &&
-    process.env.REPL_ID !== undefined
-      ? [
-          await import("@replit/vite-plugin-cartographer").then((m) =>
-            m.cartographer({
-              root: path.resolve(import.meta.dirname, ".."),
-            }),
-          ),
-          await import("@replit/vite-plugin-dev-banner").then((m) =>
-            m.devBanner(),
-          ),
-        ]
-      : []),
+    {
+      name: "replace-unicode-chars",
+      generateBundle(options, bundle) {
+        // Skip third-party library chunks (e.g. SheetJS) whose source legitimately
+        // contains smart-quote characters. Replacing them there corrupts the bundle
+        // (e.g. xlsx.js fails to parse as a module).
+        const vendorChunks = /(^|\/|\b)(xlsx|exceljs|jszip|xlsx\.full|sheetjs)[-.]?.*\.js$/i;
+        for (const fileName in bundle) {
+          const chunk = bundle[fileName];
+          if (chunk?.type === "chunk" && typeof chunk.code === "string" && !vendorChunks.test(fileName)) {
+            chunk.code = chunk.code.replace(/[\u2018\u2019\u201C\u201D]/g, (match: string) => {
+              const map: Record<string, string> = {
+                "\u2018": "'",
+                "\u2019": "'",
+                "\u201C": '"',
+                "\u201D": '"',
+              };
+              return map[match] || match;
+            });
+          }
+        }
+      },
+    },
   ],
   resolve: {
     alias: {
@@ -56,43 +40,21 @@ export default defineConfig({
     dedupe: ["react", "react-dom"],
   },
   root: path.resolve(import.meta.dirname),
-  optimizeDeps: {
-    include: [
-      "react",
-      "react-dom",
-      "react-dom/client",
-      "wouter",
-      "@tanstack/react-query",
-      "react-hook-form",
-      "@hookform/resolvers/zod",
-      "zod",
-      "lucide-react",
-      "date-fns",
-      "exceljs",
-      "jszip",
-      "xlsx",
-    ],
-    exclude: ["@replit/vite-plugin-cartographer", "@replit/vite-plugin-dev-banner"],
-  },
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
     sourcemap: false,
+    chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/index.js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name].[ext]",
+      },
+    },
   },
   server: {
-    port,
-    host: "0.0.0.0",
-    allowedHosts: true,
-    warmup: {
-      clientFiles: ["./src/main.tsx", "./src/App.tsx", "./src/pages/*.tsx"],
-    },
-    fs: {
-      strict: true,
-      deny: ["**/.*"],
-    },
-  },
-  preview: {
-    port,
+    port: 3004,
     host: "0.0.0.0",
     allowedHosts: true,
   },

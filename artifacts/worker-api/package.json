@@ -1,0 +1,13 @@
+{
+  "name": "mednexus-research-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "hono": "^4.0.0",
+    "bcryptjs": "^3.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20241001.0",
+    "wrangler": "^3.40.0"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "name": "mednexus-research",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-09-01",
+  "workers_dev": false,
+  "env": {
+    "production": {
+      "name": "mednexus-research",
+      "route": "mednexus.fit/research",
+      "zone_id": "YOUR_ZONE_ID"
+    }
+  },
+  "kv_namespaces": [
+    {
+      "binding": "SESSIONS",
+      "id": "YOUR_KV_NAMESPACE_ID"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "mednexus-research",
+      "database_id": "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
+    }
+  ],
+  "vars": {
+    "APP_USERNAME": "Khaled",
+    "APP_PASSWORD_HASH": "REDACTED_BCRYPT_HASH"
+  },
+  "observability": {
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": true,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

@@ -1,21 +1,12 @@
-import { File } from "@google-cloud/storage";
+import type { S3Object } from "./objectStorage";
+import type { HeadObjectOutput, GetObjectOutput } from "@aws-sdk/client-s3";
 
-const ACL_POLICY_METADATA_KEY = "custom:aclPolicy";
+const ACL_POLICY_METADATA_KEY = "aclPolicy";
 
-// Can be flexibly defined according to the use case.
-//
-// Examples:
-// - USER_LIST: the users from a list stored in the database;
-// - EMAIL_DOMAIN: the users whose email is in a specific domain;
-// - GROUP_MEMBER: the users who are members of a specific group;
-// - SUBSCRIBER: the users who are subscribers of a specific service / content
-//   creator.
 export enum ObjectAccessGroupType {}
 
 export interface ObjectAccessGroup {
   type: ObjectAccessGroupType;
-  // The logic id that identifies qualified group members. Format depends on the
-  // ObjectAccessGroupType — e.g. a user-list DB id, an email domain, a group id.
   id: string;
 }
 
@@ -29,7 +20,6 @@ export interface ObjectAclRule {
   permission: ObjectPermission;
 }
 
-// Stored as object custom metadata under "custom:aclPolicy" (JSON string).
 export interface ObjectAclPolicy {
   owner: string;
   visibility: "public" | "private";
@@ -55,43 +45,62 @@ abstract class BaseObjectAccessGroup implements ObjectAccessGroup {
   public abstract hasMember(userId: string): Promise<boolean>;
 }
 
-function createObjectAccessGroup(
-  group: ObjectAccessGroup,
-): BaseObjectAccessGroup {
+export function createObjectAccessGroup(group: ObjectAccessGroup): BaseObjectAccessGroup {
   switch (group.type) {
-    // Implement per access group type, e.g.:
-    // case "USER_LIST":
-    //   return new UserListAccessGroup(group.id);
     default:
       throw new Error(`Unknown access group type: ${group.type}`);
   }
 }
 
 export async function setObjectAclPolicy(
-  objectFile: File,
+  s3Object: S3Object,
   aclPolicy: ObjectAclPolicy,
 ): Promise<void> {
-  const [exists] = await objectFile.exists();
-  if (!exists) {
-    throw new Error(`Object not found: ${objectFile.name}`);
-  }
+  const { S3Client, PutObjectCommand, GetObjectCommand } = await import("@aws-sdk/client-s3");
+  const client = new S3Client({});
 
-  await objectFile.setMetadata({
-    metadata: {
-      [ACL_POLICY_METADATA_KEY]: JSON.stringify(aclPolicy),
-    },
-  });
+  const response = await client.send(
+    new GetObjectCommand({
+      Bucket: s3Object.bucketName,
+      Key: s3Object.key,
+    })
+  );
+
+  await client.send(
+    new PutObjectCommand({
+      Bucket: s3Object.bucketName,
+      Key: s3Object.key,
+      Body: response.Body,
+      ContentType: response.ContentType,
+      Metadata: {
+        [ACL_POLICY_METADATA_KEY]: JSON.stringify(aclPolicy),
+      },
+    })
+  );
 }
 
 export async function getObjectAclPolicy(
-  objectFile: File,
+  s3Object: S3Object
 ): Promise<ObjectAclPolicy | null> {
-  const [metadata] = await objectFile.getMetadata();
-  const aclPolicy = metadata?.metadata?.[ACL_POLICY_METADATA_KEY];
-  if (!aclPolicy) {
+  const { S3Client, GetObjectCommand, HeadObjectCommand } = await import("@aws-sdk/client-s3");
+  const client = new S3Client({});
+
+  try {
+    const metadata = await client.send(
+      new HeadObjectCommand({
+        Bucket: s3Object.bucketName,
+        Key: s3Object.key,
+      })
+    );
+
+    const aclPolicy = metadata?.Metadata?.[ACL_POLICY_METADATA_KEY];
+    if (!aclPolicy) {
+      return null;
+    }
+    return JSON.parse(aclPolicy as string);
+  } catch {
     return null;
   }
-  return JSON.parse(aclPolicy as string);
 }
 
 export async function canAccessObject({
@@ -100,7 +109,7 @@ export async function canAccessObject({
   requestedPermission,
 }: {
   userId?: string;
-  objectFile: File;
+  objectFile: S3Object;
   requestedPermission: ObjectPermission;
 }): Promise<boolean> {
   const aclPolicy = await getObjectAclPolicy(objectFile);
@@ -108,10 +117,7 @@ export async function canAccessObject({
     return false;
   }
 
-  if (
-    aclPolicy.visibility === "public" &&
-    requestedPermission === ObjectPermission.READ
-  ) {
+  if (aclPolicy.visibility === "public" && requestedPermission === ObjectPermission.READ) {
     return true;
   }
 

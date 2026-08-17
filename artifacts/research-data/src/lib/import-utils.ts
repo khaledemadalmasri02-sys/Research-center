@@ -1,4 +1,3 @@
-import * as XLSX from "xlsx";
 import { serializeVitals, type VitalFields } from "@/lib/vitals-utils";
 export { filterImportRows } from "@/lib/import-filter";
 
@@ -31,7 +30,8 @@ export type ImportableField =
   | "finalConfirmedDiagnosisAr"
   | "notes"
   | "radiologyImageFilePathOrLink"
-  | "radiologyImages";
+  | "radiologyImages"
+  | "imageId";
 
 export const FIELD_LABELS: Record<ImportableField, string> = {
   collectionName:                   "Collection Name",
@@ -63,19 +63,15 @@ export const FIELD_LABELS: Record<ImportableField, string> = {
   notes:                            "Notes",
   radiologyImageFilePathOrLink:     "Radiology Image Link",
   radiologyImages:                  "Image Paths (multi-image)",
+  imageId:                          "Image ID (auto-detect)",
 };
 
 export const REQUIRED_FIELDS: ImportableField[] = ["patientId", "patientName"];
 
-// ── Alias table ──────────────────────────────────────────────────────────────
-// Keys are lowercase-alphanumeric (already normalised). Order matters: first match wins.
 const ALIASES: Array<[string[], ImportableField]> = [
-  // Collection
   [["collectionname","collection","studyname","studyset","dataset","study","cohort"],    "collectionName"],
   [["dateofcollection","collectiondate","studydate","colldate"],                         "collectionDate"],
   [["collectiontype","colltype","type","category","studytype"],                          "collectionType"],
-
-  // Patient ID — broad net; many naming conventions
   [["patientid","patid","pid","caseid","casenumber","case","id",
      "no","num","number","serial","serialno","serialnumber","snumber",
      "mrno","mrnumber","mrnum","mr","uhid","regid","regno","regnumber",
@@ -83,13 +79,10 @@ const ALIASES: Array<[string[], ImportableField]> = [
      "admissionid","admissionno","recordno","recordnumber","visitid",
      "fileno","filenumber","chartno","chartnumber","casereferral",
      "referralno","caseno"],                                                             "patientId"],
-
-  // Patient Name — broad net
   [["patientname","name","fullname","patient","ptname","ptfullname",
      "patname","clientname","subjectname","participantname",
      "firstname","lastname","fullnameofpatient","nameofpatient",
      "subject","participant"],                                                            "patientName"],
-
   [["age","patientage","ageyears","ageatvisit","ageinyears"],                            "age"],
   [["sex","gender","patientgender","patientsex","m/f"],                                  "sex"],
   [["dateofvisit","visitdate","admissiondate","dateadmitted","admitdate","visitdt"],     "dateOfVisit"],
@@ -128,9 +121,10 @@ const ALIASES: Array<[string[], ImportableField]> = [
   [["imagepaths","allimagepaths","allimages","radiologyimages","imagefiles",
      "photos","pictures","imageurls","photourls","allphotos","multiphotos",
      "imagelist","photolist","xrays","scanimages"],                                    "radiologyImages"],
+  [["imageid","imaged","imagineid","scanid","studyid","examid","examnum",
+     "examd","imageidentifier","imageidentifier"],                                        "imageId"],
 ];
 
-// Normal vital reference defaults — used when a vital field is blank in the import
 const VITAL_DEFAULTS: VitalFields = {
   BP:   "120/80",
   RR:   "16",
@@ -147,23 +141,18 @@ export function detectField(header: string): ImportableField | null {
   const n = normalise(header);
   if (!n) return null;
 
-  // 1. Exact camelCase key match (e.g. "patientId" → "patientId")
   for (const key of Object.keys(FIELD_LABELS) as ImportableField[]) {
     if (normalise(key) === n) return key;
   }
 
-  // 2. Field label match (e.g. "Patient ID" → "patientId")
   for (const [key, label] of Object.entries(FIELD_LABELS) as [ImportableField, string][]) {
     if (normalise(label) === n) return key as ImportableField;
   }
 
-  // 3. Alias match
   for (const [aliases, field] of ALIASES) {
     if (aliases.includes(n)) return field;
   }
 
-  // 4. Pattern: "Image 1", "Image 2", "Image3", "Radiology 1", etc.
-  //    Maps each numbered image column to radiologyImages so all are collected.
   if (/^(image|radiologyimage|radiology|photo|picture|scan|xray)\d+$/.test(n)) {
     return "radiologyImages";
   }
@@ -173,32 +162,15 @@ export function detectField(header: string): ImportableField | null {
 
 export type ColumnMap  = { header: string; field: ImportableField | null; colIdx: number };
 export type ParsedImport = {
-  /** Auto-detected column mapping (one entry per Excel column with a header) */
   columnMap:  ColumnMap[];
-  /** Rows already mapped to ImportableField keys using the auto-detected map */
   rows:       Record<ImportableField, string>[];
-  /** Raw rows keyed by ORIGINAL Excel header string (used for manual remapping) */
   rawRows:    Record<string, string>[];
   skippedHeaders: string[];
-  /** Which row index (0-based) was chosen as the header row */
   headerRowIndex: number;
 };
 
-// ── Date helpers ──────────────────────────────────────────────────────────────
-
 function excelSerialToISO(serial: number): string | null {
   try {
-    const ssf = (XLSX as any).SSF ?? (XLSX as any).utils?.SSF;
-    if (ssf?.parse_date_code) {
-      const p = ssf.parse_date_code(serial);
-      if (p) {
-        const y = String(p.y).padStart(4, "0");
-        const m = String(p.m).padStart(2, "0");
-        const d = String(p.d).padStart(2, "0");
-        return `${y}-${m}-${d}`;
-      }
-    }
-    // Manual epoch fallback
     const excelEpoch = new Date(Date.UTC(1899, 11, 31));
     const adjusted   = serial > 59 ? serial - 1 : serial;
     const date = new Date(excelEpoch.getTime() + adjusted * 86400000);
@@ -238,9 +210,16 @@ export function parseDateValue(val: string): string {
   return "";
 }
 
-// ── Cell reader ───────────────────────────────────────────────────────────────
+type XLSXModule = typeof import("xlsx");
+let XLSX: XLSXModule | null = null;
 
-function cellToString(cell: XLSX.CellObject | undefined): string {
+async function loadXLSX(): Promise<XLSXModule> {
+  if (XLSX) return XLSX;
+  XLSX = await import("xlsx");
+  return XLSX;
+}
+
+function cellToString(cell: { t?: string; v?: unknown; w?: unknown } | undefined): string {
   if (!cell) return "";
   try {
     if (cell.t === "d") {
@@ -258,55 +237,52 @@ function cellToString(cell: XLSX.CellObject | undefined): string {
   }
 }
 
-// ── Parser ────────────────────────────────────────────────────────────────────
-
-/**
- * Score a candidate header row: count how many cells map to a known ImportableField.
- * Higher = more likely to be the real header row.
- */
-function scoreRow(ws: XLSX.WorkSheet, rowIdx: number, cStart: number, cEnd: number): number {
+async function scoreRow(ws: Record<string, { t?: string; v?: unknown; w?: unknown }>, rowIdx: number, cStart: number, cEnd: number, xlsx: XLSXModule): Promise<number> {
   let score = 0;
   for (let c = cStart; c <= cEnd; c++) {
-    const val = cellToString(ws[XLSX.utils.encode_cell({ r: rowIdx, c })]);
+    const key = xlsx.utils.encode_cell({ r: rowIdx, c });
+    const val = cellToString(ws[key]);
     if (val && detectField(val) !== null) score++;
   }
   return score;
 }
 
-export function parseExcelFile(file: File): Promise<ParsedImport> {
+export async function parseExcelFile(file: File): Promise<ParsedImport> {
+  const xlsx = await loadXLSX();
+  
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
         const raw  = e.target?.result as ArrayBuffer;
         const data = new Uint8Array(raw);
-        const wb   = XLSX.read(data, { type: "array", cellDates: false, cellNF: true, cellText: true });
+        const wb   = xlsx.read(data, { type: "array", cellDates: false, cellNF: true, cellText: true });
         const sheetName = wb.SheetNames[0];
         if (!sheetName) throw new Error("Empty workbook");
         const ws = wb.Sheets[sheetName]!;
 
-        const range = XLSX.utils.decode_range(ws["!ref"] ?? "A1");
+        const range = xlsx.utils.decode_range(ws["!ref"] ?? "A1");
 
-        // ── Auto-detect header row: scan first 10 rows, pick best-scoring ──
         const scanEnd = Math.min(range.s.r + 9, range.e.r);
         let headerRowIndex = range.s.r;
         let bestScore = -1;
+        
+        const scores: number[] = [];
         for (let r = range.s.r; r <= scanEnd; r++) {
-          const s = scoreRow(ws, r, range.s.c, range.e.c);
-          if (s > bestScore) { bestScore = s; headerRowIndex = r; }
+          scoreRow(ws, r, range.s.c, range.e.c, xlsx).then(s => {
+            scores[r] = s;
+            if (s > bestScore) { bestScore = s; headerRowIndex = r; }
+          });
         }
 
-        // Build column map from the chosen header row.
-        // Store the actual worksheet column index (colIdx) so row-reading
-        // stays aligned even when some columns have empty headers and are skipped.
         const columnMap: ColumnMap[] = [];
         for (let c = range.s.c; c <= range.e.c; c++) {
-          const val = cellToString(ws[XLSX.utils.encode_cell({ r: headerRowIndex, c })]);
+          const key = xlsx.utils.encode_cell({ r: headerRowIndex, c });
+          const val = cellToString(ws[key]);
           if (!val) continue;
           columnMap.push({ header: val, field: detectField(val), colIdx: c });
         }
 
-        // Build rows
         const rows: Record<ImportableField, string>[]    = [];
         const rawRows: Record<string, string>[]          = [];
 
@@ -316,7 +292,8 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
           let hasValue = false;
 
           for (const col of columnMap) {
-            const val = cellToString(ws[XLSX.utils.encode_cell({ r, c: col.colIdx })]);
+            const key = xlsx.utils.encode_cell({ r, c: col.colIdx });
+            const val = cellToString(ws[key]);
             raw[col.header] = val;
             if (col.field) mapped[col.field] = val;
             if (val) hasValue = true;
@@ -339,18 +316,14 @@ export function parseExcelFile(file: File): Promise<ParsedImport> {
   });
 }
 
-// ── Manual column mapping ─────────────────────────────────────────────────────
-
-/**
- * Apply a user-edited column mapping to the raw rows.
- * `mapping` keys are original Excel header strings; values are the field to map to (or null to skip).
- */
 export function applyColumnMapping(
   rawRows: Record<string, string>[],
   mapping: Record<string, ImportableField | null>
 ): Record<ImportableField, string>[] {
-  // Fields that accumulate values from multiple source columns (joined with "|")
-  const MULTI_JOIN_FIELDS = new Set<ImportableField>(["radiologyImages"]);
+  const MULTI_JOIN_FIELDS = new Set<ImportableField>([
+    "radiologyImages",
+    "radiologyImageFilePathOrLink",
+  ]);
 
   return rawRows.map((rawRow) => {
     const result = {} as Record<ImportableField, string>;
@@ -360,7 +333,6 @@ export function applyColumnMapping(
       if (!val) continue;
 
       if (MULTI_JOIN_FIELDS.has(field) && result[field]) {
-        // Append additional image paths with "|" separator
         result[field] = `${result[field]} | ${val}`;
       } else if (!(field in result)) {
         result[field] = val;
@@ -369,8 +341,6 @@ export function applyColumnMapping(
     return result;
   });
 }
-
-// ── Row → Patient ─────────────────────────────────────────────────────────────
 
 export function rowToPatient(row: Record<ImportableField, string>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -439,6 +409,12 @@ export function rowToPatient(row: Record<ImportableField, string>): Record<strin
       else if (lower.startsWith("abnormal")) result[key] = "Abnormal";
       else if (lower.startsWith("suspicious")) result[key] = "Suspicious";
       else result[key] = val;
+      continue;
+    }
+
+    if (key === "imageId") {
+      if (!val) continue;
+      result[key] = val;
       continue;
     }
 

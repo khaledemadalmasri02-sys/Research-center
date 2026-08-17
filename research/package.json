@@ -1,0 +1,31 @@
+{
+  "name": "research-worker",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "wrangler deploy --env production",
+    "deploy": "wrangler deploy --env production",
+    "dev": "wrangler dev",
+    "preview": "wrangler dev",
+    "package": "wrangler deploy --dry-run",
+    "login": "wrangler login",
+    "kv:namespace": "wrangler kv:namespace create SESSIONS",
+    "d1:create": "wrangler d1 database create mednexus-research",
+    "d1:migrate": "wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql",
+    "d1:migrate:local": "wrangler d1 execute mednexus-research --local --file=./schema.sql",
+    "secrets": "bash scripts/put-secrets.sh",
+    "tunnel": "bash scripts/setup-tunnel.sh",
+    "tunnel:run": "bash scripts/run-tunnel.sh",
+    "tunnel:info": "cloudflared tunnel info research-tunnel"
+  },
+  "dependencies": {
+    "hono": "^4.0.0",
+    "bcryptjs": "^3.0.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260815.1",
+    "wrangler": "^4.123.0"
+  }
+}

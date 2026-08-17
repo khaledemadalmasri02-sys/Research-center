@@ -122,7 +122,7 @@ export default function Home() {
               </Card>
             </div>
 
-            {stats.collectionTypeCounts.length > 0 && (
+            {stats.collectionTypeCounts?.length > 0 && (
               <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
                 <Card className="col-span-3">
                   <CardHeader>
@@ -133,7 +133,7 @@ export default function Home() {
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
-                            data={stats.collectionTypeCounts}
+                            data={stats.collectionTypeCounts ?? []}
                             dataKey="count"
                             nameKey="type"
                             cx="50%"
@@ -142,7 +142,7 @@ export default function Home() {
                             outerRadius={95}
                             paddingAngle={3}
                           >
-                            {stats.collectionTypeCounts.map((entry, idx) => (
+                            {stats.collectionTypeCounts?.map((entry, idx) => (
                               <Cell key={entry.type} fill={COLORS[idx % COLORS.length]} />
                             ))}
                           </Pie>
@@ -162,7 +162,7 @@ export default function Home() {
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3 mt-2">
-                      {stats.collectionTypeCounts.map((entry, idx) => (
+                      {stats.collectionTypeCounts?.map((entry, idx) => (
                         <div key={entry.type} className="flex items-center gap-3">
                           <div
                             className="w-3 h-3 rounded-full shrink-0"

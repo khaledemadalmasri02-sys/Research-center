@@ -183,6 +183,57 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /patients/batch:
+    post:
+      operationId: batchImportPatients
+      tags: [patients]
+      summary: Batch import patients with image URL processing
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patients]
+              properties:
+                patients:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/CreatePatientBody"
+      responses:
+        "200":
+          description: Batch import completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                        errors:
+                          type: array
+                          items:
+                            type: string
+                        updatedImagePaths:
+                          type: array
+                          items:
+                            type: string
+                  processed:
+                    type: integer
+                  failed:
+                    type: integer
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /storage/uploads/request-url:
     post:
       tags: [Storage]
@@ -240,31 +291,259 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
-  /storage/objects/{objectPath}:
-    get:
+  /storage/ensure-bucket:
+    post:
       tags: [Storage]
-      operationId: getStorageObject
-      summary: Serve an uploaded object
-      parameters:
-        - name: objectPath
-          in: path
-          required: true
-          schema:
-            type: string
+      operationId: ensureBucket
+      summary: Ensure storage bucket exists
       responses:
         '200':
-          description: Object content.
+          description: Bucket is ready.
           content:
-            '*/*':
+            application/json:
               schema:
-                type: string
-                format: binary
+                type: object
+                properties:
+                  message:
+                    type: string
         '404':
-          description: Object not found.
+          description: Bucket not found.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+  /storage/images/import:
+    post:
+      tags: [Storage]
+      operationId: importImageFromUrl
+      summary: Import an image from a URL into storage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportImageFromUrlRequest'
+      responses:
+        '200':
+          description: Image imported successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportImageFromUrlResponse'
+        '400':
+          description: Invalid request or URL does not point to an image.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+
+/storage/images/by-patient:
+  post:
+    tags: [Storage]
+    operationId: importImageByPatient
+    summary: Import an image from a URL and associate with a patient
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ImportImageByPatientRequest'
+    responses:
+      '200':
+        description: Image imported successfully.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportImageByPatientResponse'
+      '400':
+        description: Invalid request or URL does not point to an image.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+      '500':
+        description: Server error.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+
+/storage/images/by-patient/{patientId}:
+  get:
+    tags: [Storage]
+    operationId: getPatientImages
+    summary: List all images associated with a patient ID
+    parameters:
+      - name: patientId
+        in: path
+        required: true
+        schema:
+          type: string
+    responses:
+      '200':
+        description: Images found.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatientImagesResponse'
+'500':
+        description: Server error.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+
+/storage/images/search:
+  post:
+    tags: [Storage]
+    operationId: searchImages
+    summary: Search for images by identifier or filename
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              identifier:
+                type: string
+                description: Image identifier to search (e.g., patient ID, study ID)
+              patientId:
+                type: string
+                description: Existing patient ID to attach images to
+              filename:
+                type: string
+                description: Filename pattern to search for
+            additionalProperties: false
+    responses:
+      '200':
+        description: Images found.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchImagesResponse'
+      '404':
+        description: No images found.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+      '400':
+        description: Invalid request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+
+/patients/{id}/images:
+  post:
+    tags: [patients]
+    operationId: attachPatientImageById
+    summary: Attach existing images to a patient by image ID
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [imageId]
+            properties:
+              imageId:
+                type: string
+                description: The ID to search for images (e.g., patient ID, study ID)
+    responses:
+      '200':
+        description: Image attached to patient.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Patient'
+      '404':
+        description: Patient or image not found.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+      '400':
+        description: Invalid request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+
+/patients/batch-import-images:
+  post:
+    tags: [patients]
+    operationId: batchImportImages
+    summary: Batch upload images from URLs and attach to a patient record
+    requestBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [patientId, imageUrls]
+            properties:
+              patientId:
+                type: string
+                description: Patient ID to attach images to
+              imageUrls:
+                type: array
+                items:
+                  type: string
+                  format: uri
+                description: List of image URLs to download and upload
+    responses:
+      '200':
+        description: Images imported successfully.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uploaded:
+                  type: integer
+                  description: Number of images successfully uploaded
+                failed:
+                  type: integer
+                  description: Number of failed uploads
+                failedUrls:
+                  type: array
+                  items:
+                    type: string
+                patient:
+                  $ref: '#/components/schemas/Patient'
+      '404':
+        description: Patient not found.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
+      '400':
+        description: Invalid request.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorEnvelope'
 
 components:
   schemas:
@@ -395,11 +674,13 @@ components:
           type: ["string", "null"]
         finalConfirmedDiagnosisAr:
           type: ["string", "null"]
-        finalConfirmedDiagnosis:
+finalConfirmedDiagnosis:
+          type: ["string", "null"]
+        imageId:
           type: ["string", "null"]
         notes:
           type: ["string", "null"]
-      required:
+        required:
         - patientId
         - patientName
 
@@ -564,4 +845,70 @@ components:
       required: [error]
       properties:
         error:
+          type: string
+
+    ImportImageFromUrlRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        filename:
+          type: string
+
+    ImportImageFromUrlResponse:
+      type: object
+      required: [objectPath, contentType]
+      properties:
+        objectPath:
+          type: string
+        contentType:
+          type: string
+
+    ImportImageByPatientRequest:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+        filename:
+          type: string
+        patientId:
+          type: string
+
+    ImportImageByPatientResponse:
+      type: object
+      required: [objectPath, patientImages]
+      properties:
+        objectPath:
+          type: string
+        patientImages:
+          type: array
+          items:
+            type: string
+
+    PatientImagesResponse:
+      type: object
+      required: [patientId, images]
+      properties:
+        patientId:
+          type: string
+        images:
+          type: array
+          items:
+            type: string
+
+    SearchImagesResponse:
+      type: object
+      required: [objectPath]
+      properties:
+        objectPath:
+          type: string
+        patientImages:
+          type: array
+          items:
+            type: string
+        attachmentPatientId:
           type: string
