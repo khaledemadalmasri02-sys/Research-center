@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "wouter";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -74,6 +75,13 @@ export default function Login() {
               {isLoggingIn ? "Signing in…" : "Sign in"}
             </Button>
           </form>
+
+          <p className="text-center text-sm text-muted-foreground">
+            Don't have an account?{" "}
+            <Link href="/signup" className="text-primary font-medium hover:underline">
+              Request access
+            </Link>
+          </p>
         </div>
       </div>
     </div>

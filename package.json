@@ -20,11 +20,16 @@
     "deploy:worker": "pnpm -C research install && pnpm -C research exec wrangler deploy --env production",
     "db:migrate": "bash scripts/db-migrate.sh",
     "db:migrate:local": "cd research && wrangler d1 execute mednexus-research --local --file=./schema.sql",
+    "d1:migrate": "cd research && pnpm install && pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql",
+    "d1:migrate:local": "cd research && pnpm exec wrangler d1 execute mednexus-research --local --file=./schema.sql",
     "tunnel": "bash scripts/deploy.sh",
-    "tunnel:run": "pnpm run deploy:worker",
+    "tunnel:run": "bash scripts/tunnel-run.sh",
+    "research": "bash scripts/research-deploy.sh",
+    "research:down": "bash scripts/research-down.sh",
     "tunnel:setup": "cd research && pnpm install",
     "ngrok": "bash scripts/ngrok-storage.sh",
-    "run:all": "pnpm dev && pnpm run tunnel:run && pnpm run tunnel"
+    "dev:all": "pnpm dev && pnpm run tunnel:run && pnpm run tunnel",
+    "run:all": "pnpm run d1:migrate && pnpm run deploy"
   },
   "private": true,
   "devDependencies": {

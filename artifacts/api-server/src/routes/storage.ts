@@ -5,10 +5,12 @@ import {
 } from "@workspace/api-zod";
 import { ObjectStorageService, BucketNotFoundError } from "../lib/objectStorage";
 import { s3Client } from "../lib/objectStorage";
-import { PutObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
-import { db, patientsTable } from "@workspace/db";
+import { PutObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
+import { Readable } from "stream";
+import { db, patientsTable, pool } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { radiologyImageService } from "../lib/radiologyImages";
+import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -62,6 +64,78 @@ function guessExtension(url: string, contentType: string | null): string {
   const m = url.match(/\.(png|jpg|jpeg|gif|webp)(\?|$)/i);
   if (m) return m[1]!.toLowerCase().replace("jpeg", "jpg");
   return "jpg";
+}
+
+/**
+ * Stream an S3/MinIO object's bytes straight to the Express response.
+ *
+ * We deliberately do NOT redirect to a presigned URL: in production the
+ * presigned URL points at an internal MinIO host (e.g. localhost:9000) that
+ * the browser cannot reach, which surfaced as 403s. Streaming through the API
+ * server keeps the browser talking only to the app origin (research-center.fit).
+ */
+async function streamObject(res: Response, bucket: string, key: string): Promise<void> {
+  const out = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  const body = out.Body;
+  if (!body) throw new Error("Empty object body");
+  res.setHeader("Content-Type", out.ContentType || "application/octet-stream");
+  res.setHeader("Cache-Control", "private, max-age=3600");
+  if (out.ContentLength) res.setHeader("Content-Length", String(out.ContentLength));
+  if (out.ContentDisposition) res.setHeader("Content-Disposition", out.ContentDisposition);
+  const nodeStream = body as Readable;
+  nodeStream.on("error", (streamErr) => {
+    logger.error({ err: streamErr }, "Error streaming object body");
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to stream object" });
+    } else {
+      res.end();
+    }
+  });
+  nodeStream.pipe(res);
+}
+
+/**
+ * Best-effort: also attach an uploaded image to the active "Patients"
+ * collection (record) so it shows up under the collection feature, not only on
+ * the legacy patients.radiology_images column. Idempotent on (recordId, objectKey).
+ */
+async function attachToActiveCollection(patientIdText: string, objectKey: string): Promise<void> {
+  if (!patientIdText) return;
+  try {
+    const active = await pool.query(
+      `SELECT "id" FROM "record_definitions" WHERE "shared" = true AND "isActive" = true LIMIT 1`,
+    );
+    let defId: number | undefined = active.rows[0]?.id;
+    if (!defId) {
+      const fallback = await pool.query(
+        `SELECT "id" FROM "record_definitions" WHERE "name" = 'Patients' AND "shared" = true LIMIT 1`,
+      );
+      defId = fallback.rows[0]?.id;
+    }
+    if (!defId) return;
+
+    const normalized = patientIdText.replace(/^PAT/i, "");
+    const rec = await pool.query(
+      `SELECT "id" FROM "records"
+       WHERE "definition_id" = $1
+         AND ("data"->>'patientId' = $2 OR "data"->>'patientId' = $3)
+       LIMIT 1`,
+      [defId, patientIdText, normalized],
+    );
+    const recordId = rec.rows[0]?.id;
+    if (!recordId) return;
+
+    await pool.query(
+      `INSERT INTO "record_images" ("record_id", "field_key", "object_key")
+       SELECT $1, 'radiologyImages', $2
+       WHERE NOT EXISTS (
+         SELECT 1 FROM "record_images" WHERE "record_id" = $1 AND "object_key" = $2
+       )`,
+      [recordId, objectKey],
+    );
+  } catch (err) {
+    logger.warn({ err, patientIdText, objectKey }, "Failed to attach image to collection record");
+  }
 }
 
 router.get("/storage/health", async (_req: Request, res: Response) => {
@@ -140,13 +214,7 @@ router.get("/storage/public-objects/*filePath", async (req: Request, res: Respon
       return;
     }
 
-    const presignedUrl = await objectStorageService.getPresignedDownloadUrl(
-      file.bucketName,
-      file.key,
-      3600
-    );
-
-    res.redirect(303, presignedUrl);
+    await streamObject(res, file.bucketName, file.key);
   } catch (error) {
     const err = error as Error;
     req.log.error({ err: err.message, filePath: req.params.filePath }, "Error serving public object");
@@ -165,21 +233,13 @@ router.get("/storage/objects/*path", async (req: Request, res: Response) => {
     const objectKey = Array.isArray(raw) ? raw.join("/") : raw;
     
     const bucket = objectStorageService.getBucket();
-    const exists = await objectStorageService.objectExists(bucket, objectKey);
-    
-    if (!exists) {
+    await streamObject(res, bucket, objectKey);
+  } catch (error) {
+    const err = error as { name?: string; message?: string };
+    if (err.name === "NoSuchKey" || err.name === "NotFound") {
       res.status(404).json({ error: "Object not found" });
       return;
     }
-
-    const presignedUrl = await objectStorageService.getPresignedDownloadUrl(
-      bucket,
-      objectKey,
-      3600
-    );
-
-    res.redirect(303, presignedUrl);
-  } catch (error) {
     req.log.error({ err: error }, "Error serving object");
     res.status(500).json({ error: "Failed to serve object" });
   }
@@ -495,6 +555,10 @@ async function updatePatientImages(req: Request, patient: any, objectKey: string
     const images = await radiologyImageService.listImages(patient.id);
 
     req.log.info({ patientId: patient?.patientId, imageCount: images.length }, "Patient images updated successfully");
+
+    // Also attach to the active "Patients" collection so the image is visible
+    // under the collection feature, not only on the legacy patients column.
+    await attachToActiveCollection(patient.patientId, objectKey);
 
     result.patientId = patient.patientId;
     result.previewsCount = images.length;

@@ -1,10 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-async function fetchMe() {
+interface AuthMe {
+  authenticated: boolean;
+  username: string | null;
+  role: "admin" | "editor" | "viewer" | "user" | null;
+  canAdminAccess: boolean;
+}
+
+async function fetchMe(): Promise<AuthMe> {
   const res = await fetch("/api/auth/me", { credentials: "include" });
-  if (res.status === 401) return { authenticated: false, username: null };
+  if (res.status === 401) return { authenticated: false, username: null, role: null, canAdminAccess: false };
   if (!res.ok) throw new Error("Failed to check auth");
-  return res.json() as Promise<{ authenticated: boolean; username: string }>;
+  return res.json() as Promise<AuthMe>;
 }
 
 async function postLogin(username: string, password: string) {
@@ -23,6 +30,26 @@ async function postLogin(username: string, password: string) {
 
 async function postLogout() {
   await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+}
+
+async function postSignup(payload: {
+  username: string;
+  password: string;
+  fullName?: string;
+  email?: string;
+  reason?: string;
+}) {
+  const res = await fetch("/api/auth/signup", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any).error ?? "Sign-up failed");
+  }
+  return res.json();
 }
 
 export function useAuth() {
@@ -46,13 +73,24 @@ export function useAuth() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth-me"] }),
   });
 
+  const signupMutation = useMutation({
+    mutationFn: postSignup,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth-me"] }),
+  });
+
   return {
     isLoading,
     authenticated: data?.authenticated ?? false,
     username: data?.username ?? null,
+    role: data?.role ?? null,
+    canAdminAccess: data?.canAdminAccess ?? false,
+    canEdit: data?.role ? data.role !== "viewer" : false,
     login: loginMutation.mutateAsync,
     loginError: loginMutation.error?.message ?? null,
     isLoggingIn: loginMutation.isPending,
     logout: logoutMutation.mutateAsync,
+    signup: signupMutation.mutateAsync,
+    signupError: signupMutation.error?.message ?? null,
+    isSigningUp: signupMutation.isPending,
   };
 }

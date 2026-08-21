@@ -24,11 +24,9 @@ database_name = "mednexus-research"
 database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
 
 [vars]
-APP_USERNAME = "Khaled"
-APP_PASSWORD_HASH = "REDACTED_BCRYPT_HASH"
-S3_BUCKET = "mednexus"
-S3_REGION = "auto"
-PUBLIC_API_URL = "/api"
+# API_BACKEND_URL is NOT declared here: the deploy script (`pnpm research`)
+# sets it as a Worker SECRET from the live cloudflared tunnel URL. A var and a
+# secret cannot share a binding name, so it must live only in the secret.
 
 [env.production]
 name = "research"
@@ -51,16 +49,11 @@ database_name = "mednexus-research"
 database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
 
 [env.production.vars]
-APP_USERNAME = "Khaled"
-APP_PASSWORD_HASH = "REDACTED_BCRYPT_HASH"
-S3_BUCKET = "mednexus"
-S3_REGION = "auto"
-PUBLIC_API_URL = "/api"
+# API_BACKEND_URL is set as a Worker SECRET by the deploy script
+# (`pnpm research`) from the live cloudflared tunnel URL. It must NOT also
+# appear here (a var and a secret cannot share a binding name).
 
-# S3 / MinIO credentials are SECRETS — set them once with:
-#   wrangler secret put --env production S3_ENDPOINT
-#   wrangler secret put --env production S3_ACCESS_KEY_ID
-#   wrangler secret put --env production S3_SECRET_ACCESS_KEY
-#   wrangler secret put --env production SESSION_SECRET
-#   wrangler secret put --env production GROQ_API_KEY   # optional, for voice
-# (Do NOT put secrets in this file.)
+# The Worker is now a pure static + /api reverse-proxy to the Postgres
+# api-server, so it no longer needs S3 / session / GROQ secrets itself —
+# those live on the api-server (MinIO + Postgres are local to it).
+

@@ -47,3 +47,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Local cloudflared tunnel token (secret) — optional fallback for pnpm run tunnel:run
+research/.cloudflared-token

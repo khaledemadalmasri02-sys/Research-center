@@ -1,6 +1,8 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, eq, ilike, or, sql, desc } from "drizzle-orm";
-import { db, patientsTable } from "@workspace/db";
+import dns from "node:dns";
+import { isIP } from "node:net";
+import { db, patientsTable, recordDefinitionsTable, recordsTable } from "@workspace/db";
 import {
   ListPatientsQueryParams,
   ListPatientsResponse,
@@ -16,6 +18,58 @@ import {
 import { s3Client, ObjectStorageService } from "../lib/objectStorage";
 import { radiologyImageService } from "../lib/radiologyImages";
 import { PutObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { writeAudit, clientIp } from "../lib/audit";
+
+// ---- SSRF guard -------------------------------------------------------------
+function ipToLong(ip: string): number | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let long = 0;
+  for (const p of parts) {
+    const n = Number(p);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+    long = long * 256 + n;
+  }
+  return long >>> 0;
+}
+
+function inRange(ipLong: number, cidr: string): boolean {
+  const [base, bitsStr] = cidr.split("/");
+  const bits = Number(bitsStr);
+  const baseLong = ipToLong(base);
+  if (baseLong === null) return false;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ipLong & mask) === (baseLong & mask);
+}
+
+const PRIVATE_CIDRS = [
+  "0.0.0.0/8",
+  "10.0.0.0/8",
+  "100.64.0.0/10",
+  "127.0.0.0/8",
+  "169.254.0.0/16",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+];
+
+function isPrivateIp(ip: string): boolean {
+  if (ip === "::1" || ip === "0.0.0.0") return true;
+  // IPv6 unique-local / link-local
+  if (ip.startsWith("fc") || ip.startsWith("fd") || ip.startsWith("fe80")) return true;
+  if (isIP(ip) !== 4) return false;
+  const long = ipToLong(ip);
+  if (long === null) return false;
+  return PRIVATE_CIDRS.some((c) => inRange(long, c));
+}
+
+async function isBlockedHost(hostname: string): Promise<boolean> {
+  try {
+    const addresses = await dns.promises.lookup(hostname, { all: true });
+    return addresses.some((a) => isPrivateIp(a.address));
+  } catch {
+    return true; // fail closed
+  }
+}
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -228,11 +282,30 @@ router.post("/patients", async (req, res): Promise<void> => {
 
   const [patient] = await db.insert(patientsTable).values(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data).returning();
 
+  await writeAudit({
+    userId: req.session?.userId ?? null,
+    action: "patient.create",
+    entityId: patient!.id,
+    detail: { patientId: patient!.patientId },
+    ip: clientIp(req),
+  });
+
   res.status(201).json(GetPatientResponse.parse(await serializePatientWithImages(patient!)));
 });
 
 router.get("/patients/stats", async (_req, res): Promise<void> => {
-  const allPatients = await db.select().from(patientsTable);
+  let allPatients: any[];
+  const [pdef] = await db
+    .select({ id: recordDefinitionsTable.id })
+    .from(recordDefinitionsTable)
+    .where(and(eq(recordDefinitionsTable.name, "Patients"), eq(recordDefinitionsTable.shared, true)))
+    .limit(1);
+  if (pdef) {
+    const recs = await db.select().from(recordsTable).where(eq(recordsTable.definitionId, pdef.id));
+    allPatients = recs.map((r) => ({ ...(r.data as Record<string, unknown>), createdAt: r.createdAt }));
+  } else {
+    allPatients = await db.select().from(patientsTable);
+  }
 
   const total = allPatients.length;
   const maleCount = allPatients.filter((p) => p.sex === "Male").length;
@@ -488,6 +561,14 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
+  await writeAudit({
+    userId: req.session?.userId ?? null,
+    action: "patient.update",
+    entityId: patient.id,
+    detail: { patientId: patient.patientId },
+    ip: clientIp(req),
+  });
+
   res.json(UpdatePatientResponse.parse(await serializePatientWithImages(patient)));
 });
 
@@ -573,6 +654,14 @@ router.delete("/patients/:id", async (req, res: Response): Promise<void> => {
     res.status(404).json({ error: "Patient not found" });
     return;
   }
+
+  await writeAudit({
+    userId: req.session?.userId ?? null,
+    action: "patient.delete",
+    entityId: patient.id,
+    detail: { patientId: patient.patientId },
+    ip: clientIp(req),
+  });
 
   res.sendStatus(204);
 });
@@ -691,22 +780,42 @@ router.post("/patients/batch", async (req: Request, res: Response): Promise<void
   });
 });
 
+const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB cap
+const FETCH_TIMEOUT_MS = 15_000;
+
 async function fetchAndUploadImage(url: string, patientId: string | undefined, patientName: string | undefined): Promise<string | null> {
+  let parsed: URL;
   try {
-    const response = await fetch(url);
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
+
+  // SSRF guard: never fetch from private/loopback addresses.
+  if (await isBlockedHost(parsed.hostname)) return null;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(timer);
+
     if (!response.ok) return null;
-    
+
     const contentType = response.headers.get("content-type") || "application/octet-stream";
     if (!contentType.startsWith("image/")) return null;
-    
+
     const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > MAX_IMAGE_BYTES) return null;
     const body = new Uint8Array(arrayBuffer);
-    
+
     const ext = guessExtension(url, contentType);
     const baseName = patientId ? `patient_${patientId}` : "imported";
     const objectId = `${Date.now()}-${baseName}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
     const objectKey = `radiology/${objectId}`;
-    
+
     const bucket = objectStorageService.getBucket();
     await s3Client.send(new PutObjectCommand({
       Bucket: bucket,
@@ -714,7 +823,7 @@ async function fetchAndUploadImage(url: string, patientId: string | undefined, p
       Body: body,
       ContentType: contentType,
     }));
-    
+
     return objectKey;
   } catch {
     return null;

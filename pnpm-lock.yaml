@@ -221,6 +221,9 @@ importers:
       drizzle-orm:
         specifier: 'catalog:'
         version: 0.45.2(@cloudflare/workers-types@4.20260702.1)(@types/pg@8.20.0)(pg@8.22.0)
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
       express:
         specifier: ^5
         version: 5.2.1(supports-color@10.2.2)
@@ -233,6 +236,9 @@ importers:
       multer:
         specifier: ^2.2.0
         version: 2.2.0
+      nodemailer:
+        specifier: ^6.10.1
+        version: 6.10.1
       openai:
         specifier: ^6.48.0
         version: 6.48.0(@aws-sdk/credential-provider-node@3.972.79)(@smithy/signature-v4@5.7.0)(ws@8.18.0)(zod@3.25.76)
@@ -264,6 +270,9 @@ importers:
       '@types/node':
         specifier: 'catalog:'
         version: 25.9.5
+      '@types/nodemailer':
+        specifier: ^6.4.17
+        version: 6.4.24
       esbuild:
         specifier: 0.27.3
         version: 0.27.3
@@ -659,6 +668,12 @@ importers:
       framer-motion:
         specifier: 'catalog:'
         version: 12.42.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+      i18next:
+        specifier: ^23.16.8
+        version: 23.16.8
+      i18next-browser-languagedetector:
+        specifier: ^8.0.2
+        version: 8.2.1
       input-otp:
         specifier: ^1.4.2
         version: 1.4.2(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -680,6 +695,9 @@ importers:
       react-hook-form:
         specifier: ^7.55.0
         version: 7.81.0(react@19.1.0)
+      react-i18next:
+        specifier: ^15.4.1
+        version: 15.7.4(i18next@23.16.8)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3)
       react-icons:
         specifier: ^5.4.0
         version: 5.7.0(react@19.1.0)
@@ -2403,6 +2421,9 @@ packages:
   '@types/node@25.9.5':
     resolution: {integrity: sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg==}
 
+  '@types/nodemailer@6.4.24':
+    resolution: {integrity: sha512-Ww4u0rT9wQNXh4JiQaIwx3QWdcOFXzOjQA2zc+jtFYNmQiT4mIUqcDin51bDFdkzKubFnQCZNK7FIHlPKQ/q9w==}
+
   '@types/pako@2.0.4':
     resolution: {integrity: sha512-VWDCbrLeVXJM9fihYodcLiIv0ku+AlOa/TQ1SvYOaBuyrSKgEcro95LJyIsJ4vSo6BXIxOKxiJAat04CmST9Fw==}
 
@@ -3530,6 +3551,9 @@ packages:
     resolution: {integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==}
     engines: {node: '>=16.9.0'}
 
+  html-parse-stringify@3.1.0:
+    resolution: {integrity: sha512-E0oAXcELOtsXe+BmpJ2EZyedbldPpriV5vICzEuo6xjC/D1lDukOI7KrpfQGF2Qc4wWEy0nk3bFORS2K5ZAhFQ==}
+
   html2canvas@1.4.1:
     resolution: {integrity: sha512-fPU6BHNpsyIhr8yyMpTLLxAbkaK8ArIBcmZIRiBLiDhjeqvXolaEmDGmELFuX9I4xDcaKKcJl+TKZLqruBbmWA==}
     engines: {node: '>=8.0.0'}
@@ -3548,6 +3572,12 @@ packages:
   human-signals@8.0.1:
     resolution: {integrity: sha512-eKCa6bwnJhvxj14kZk5NCPc6Hb6BdsU9DZcOnmQKSnO1VKrfV0zCvtttPZUsBvjmNDn8rpcJfpwSYnHBjc95MQ==}
     engines: {node: '>=18.18.0'}
+
+  i18next-browser-languagedetector@8.2.1:
+    resolution: {integrity: sha512-bZg8+4bdmaOiApD7N7BPT9W8MLZG+nPTOFlLiJiT8uzKXFjhxw4v2ierCXOwB5sFDMtuA5G4kgYZ0AznZxQ/cw==}
+
+  i18next@23.16.8:
+    resolution: {integrity: sha512-06r/TitrM88Mg5FdUXAKL96dJMzgqLE5dv3ryBAra4KCwD9mJ4ndOTS95ZuymIGoE+2hzfdaMak2X11/es7ZWg==}
 
   iconv-lite@0.7.3:
     resolution: {integrity: sha512-IKXpvIzjnC9XTAUbVBcMfGS0EPaIXtW6v+zr+RRp+hqULEpo0owZax6wyRwPOJbWbzjYspQwusTsfVr0ifh4uQ==}
@@ -3978,6 +4008,10 @@ packages:
     resolution: {integrity: sha512-X75ZN8DCLftGM5iKwoYLA3rjnrAEs97MkzvSd4q2746Tgpg8b8XWiBGiBG4ZpgcAqBgtgPHTiAc8ZMCvZuikDw==}
     engines: {node: '>=10'}
 
+  nodemailer@6.10.1:
+    resolution: {integrity: sha512-Z+iLaBGVaSjbIzQ4pX6XV41HrooLsQ10ZWPUehGmuantvzWoDVBnmsdUcOIDM1t+yPor5pDhVlDESgOMEGxhHA==}
+    engines: {node: '>=6.0.0'}
+
   normalize-path@3.0.0:
     resolution: {integrity: sha512-6eZs5Ls3WtCisHWp9S2GUy8dqkpGi4BVSz3GaqiE6ezub0512ESztXUwUB6C6IKbQkY2Pnb/mD4WYojCRwcwLA==}
     engines: {node: '>=0.10.0'}
@@ -4343,6 +4377,22 @@ packages:
     engines: {node: '>=18.0.0'}
     peerDependencies:
       react: ^16.8.0 || ^17 || ^18 || ^19
+
+  react-i18next@15.7.4:
+    resolution: {integrity: sha512-nyU8iKNrI5uDJch0z9+Y5XEr34b0wkyYj3Rp+tfbahxtlswxSCjcUL9H0nqXo9IR3/t5Y5PKIA3fx3MfUyR9Xw==}
+    peerDependencies:
+      i18next: '>= 23.4.0'
+      react: '>= 16.8.0'
+      react-dom: '*'
+      react-native: '*'
+      typescript: ^5
+    peerDependenciesMeta:
+      react-dom:
+        optional: true
+      react-native:
+        optional: true
+      typescript:
+        optional: true
 
   react-icons@5.7.0:
     resolution: {integrity: sha512-LBLy340Rzqy6+/yVhZKT3B/QpP1BZaesGqasf09HPOBzRarcDIFH0WwXlXQfE7q7ipxK4MSiC5DIBWURCny6fw==}
@@ -4954,6 +5004,10 @@ packages:
 
   vm-browserify@1.1.2:
     resolution: {integrity: sha512-2ham8XPWTONajOR0ohOKOHXkm3+gaBmGut3SRuu75xLd/RRaY6vqgh8NBYYk7+RW3u5AtzPQZG8F10LHkl0lAQ==}
+
+  void-elements@3.1.0:
+    resolution: {integrity: sha512-Dhxzh5HZuiHQhbvTW9AMetFfBHDMYpo23Uo9btPXgdYP+3T5S+p+jgNy7spra+veYhBP2dCSgxR/i2Y02h5/6w==}
+    engines: {node: '>=0.10.0'}
 
   web-streams-polyfill@3.3.3:
     resolution: {integrity: sha512-d2JWLCivmZYTSIoge9MsgFCZrt571BikcWGYkjC1khllbTeDlGqZ2D8vD8E/lJa8WGWbb7Plm8/XJYV7IJHZZw==}
@@ -6833,6 +6887,10 @@ snapshots:
     dependencies:
       undici-types: 7.24.6
 
+  '@types/nodemailer@6.4.24':
+    dependencies:
+      '@types/node': 25.9.5
+
   '@types/pako@2.0.4': {}
 
   '@types/pg@8.20.0':
@@ -8015,6 +8073,10 @@ snapshots:
 
   hono@4.13.1: {}
 
+  html-parse-stringify@3.1.0:
+    dependencies:
+      void-elements: 3.1.0
+
   html2canvas@1.4.1:
     dependencies:
       css-line-break: 2.1.0
@@ -8039,6 +8101,14 @@ snapshots:
       - supports-color
 
   human-signals@8.0.1: {}
+
+  i18next-browser-languagedetector@8.2.1:
+    dependencies:
+      '@babel/runtime': 7.29.7
+
+  i18next@23.16.8:
+    dependencies:
+      '@babel/runtime': 7.29.7
 
   iconv-lite@0.7.3:
     dependencies:
@@ -8458,6 +8528,8 @@ snapshots:
       util: 0.12.5
       vm-browserify: 1.1.2
 
+  nodemailer@6.10.1: {}
+
   normalize-path@3.0.0: {}
 
   npm-run-path@6.0.0:
@@ -8835,6 +8907,16 @@ snapshots:
   react-hook-form@7.81.0(react@19.1.0):
     dependencies:
       react: 19.1.0
+
+  react-i18next@15.7.4(i18next@23.16.8)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)(typescript@5.9.3):
+    dependencies:
+      '@babel/runtime': 7.29.7
+      html-parse-stringify: 3.1.0
+      i18next: 23.16.8
+      react: 19.1.0
+    optionalDependencies:
+      react-dom: 19.1.0(react@19.1.0)
+      typescript: 5.9.3
 
   react-icons@5.7.0(react@19.1.0):
     dependencies:
@@ -9500,6 +9582,8 @@ snapshots:
       yaml: 2.9.0
 
   vm-browserify@1.1.2: {}
+
+  void-elements@3.1.0: {}
 
   web-streams-polyfill@3.3.3: {}
 
