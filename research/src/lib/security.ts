@@ -71,6 +71,13 @@ export function hashPassword(password: string): string {
   return bcrypt.hashSync(password, bcrypt.genSaltSync(10));
 }
 
+// Detects a UNIQUE-constraint violation on SQLite/D1 (e.g. duplicate username)
+// so callers can return a clean 409 instead of a 500.
+export function isUniqueViolation(e: unknown): boolean {
+  const msg = (e as { message?: string })?.message ?? "";
+  return /UNIQUE constraint failed/i.test(msg) || /constraint failed/i.test(msg);
+}
+
 export function verifyPassword(password: string, hash: string): boolean {
   try {
     return bcrypt.compareSync(password, hash);
@@ -182,6 +189,46 @@ export async function getAuthUser(c: AppContext): Promise<AuthResult | null> {
     if (session?.authenticated) {
       const user = await loadUser(c, session.userId);
       if (user) return { user };
+    }
+  }
+
+  // Fallback: the user may be authenticated by the Postgres-backed api-server
+  // (its session cookie, not a D1 session). Validate the cookie against
+  // /api/auth/me and derive the user from the response.
+  const backend = (c.env.API_BACKEND_URL || "").replace(/\/+$/, "");
+  if (backend) {
+    const cookie = c.req.header("Cookie");
+    if (cookie) {
+      try {
+        const me = await fetch(`${backend}/api/auth/me`, { headers: { Cookie: cookie } });
+        if (me.ok) {
+          const data = (await me.json()) as {
+            authenticated?: boolean;
+            id?: number;
+            username?: string;
+            fullName?: string | null;
+            email?: string | null;
+            role?: string;
+            canAdminAccess?: boolean;
+            status?: string;
+          };
+          if (data?.authenticated && data.id != null) {
+            return {
+              user: {
+                id: data.id,
+                username: data.username ?? "",
+                fullName: data.fullName ?? null,
+                email: data.email ?? null,
+                role: data.role || "viewer",
+                canAdminAccess: !!data.canAdminAccess,
+                status: data.status || "active",
+              },
+            };
+          }
+        }
+      } catch {
+        /* api-server unreachable; fall through to unauthenticated */
+      }
     }
   }
   return null;
@@ -354,3 +401,73 @@ export async function resetAccountFailures(c: AppContext, userId: number): Promi
     .bind(userId)
     .run();
 }
+
+// ---- SSRF guard (update1.md Phase C.2) ----
+
+const PRIVATE_IPV4 =
+  /^(10\.|127\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/;
+const PRIVATE_IPV6 = /^(::1|fc|fd|fe[8-9a-f]|ff)/i;
+
+// Pure check: is the URL host a private/loopback/link-local/metadata address or
+// a non-public hostname? Used to block server-side fetches of internal
+// resources (e.g. cloud metadata endpoints). Returns { ok, reason }.
+export function ssrfCheck(rawUrl: string): { ok: boolean; reason?: string } {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return { ok: false, reason: "Invalid URL" };
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { ok: false, reason: "Only http(s) URLs are allowed" };
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) {
+    return { ok: false, reason: "Localhost / internal host blocked" };
+  }
+  // Cloud metadata endpoints (AWS/GCP/Azure) and link-local.
+  if (host === "169.254.169.254") {
+    return { ok: false, reason: "Link-local metadata endpoint blocked" };
+  }
+  // IPv4 literals in private ranges.
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) {
+    if (PRIVATE_IPV4.test(host)) return { ok: false, reason: "Private IP blocked" };
+  } else if (host.includes(":")) {
+    if (PRIVATE_IPV6.test(host)) return { ok: false, reason: "Private IPv6 blocked" };
+  }
+  return { ok: true };
+}
+
+// ---- CSRF guard (update1.md Phase A1) ----
+
+// Issue a CSRF double-submit cookie. The same token must be echoed back in the
+// `X-CSRF-Token` header on mutating requests. Stateless (no server storage).
+export function issueCsrfToken(c: AppContext): string {
+  const token = randomToken(32);
+  const isProd = (c.env as any)?.ENVIRONMENT === "production";
+  c.header(
+    "Set-Cookie",
+    `csrf=${token}; Path=/; SameSite=Strict; ${isProd ? "Secure; " : ""}Max-Age=86400`
+  );
+  return token;
+}
+
+// Hono middleware enforcing CSRF double-submit for state-changing requests that
+// are authenticated via session cookie (Bearer/API-token requests are exempt).
+export async function csrfGuard(c: AppContext, next: Next): Promise<Response | void> {
+  const method = c.req.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
+    return next();
+  }
+  const authHeader = c.req.header("authorization") || "";
+  if (/^Bearer\s+/i.test(authHeader)) {
+    return next(); // API-token auth is exempt
+  }
+  const cookieToken = getCookieVal(c, "csrf");
+  const headerToken = c.req.header("x-csrf-token");
+  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+    return c.json({ error: "CSRF token mismatch." }, 403);
+  }
+  return next();
+}
+

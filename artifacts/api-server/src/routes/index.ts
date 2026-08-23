@@ -14,8 +14,11 @@ import searchRouter from "./search";
 import savedViewsRouter from "./saved-views";
 import notificationsRouter from "./notifications";
 import sessionsRouter from "./sessions";
+import collectionsRouter from "./collections";
 import metricsRouter from "./metrics";
 import backupRouter from "./backup";
+import analysisRouter from "./analysis";
+import tourConfigRouter from "./tour-config";
 import { requireAdmin } from "../middlewares/requireAdmin";
 import { authenticateApiToken } from "../lib/apiToken";
 
@@ -28,8 +31,13 @@ router.use(healthRouter);
 router.use(requireAuth, patientsRouter);
 router.use(storageRouter);
 router.use(requireAuth, voiceRouter);
-router.use(requireAuth, requireAdmin, schemaRouter);
-router.use(requireAuth, requireAdmin, adminRouter);
+// NOTE: `requireAdmin` is applied INSIDE schemaRouter/adminRouter/metricsRouter/
+// backupRouter (via `router.use(requireAdmin)` at the top of each file), NOT here.
+// Mounting it at this level with no path would register it as a root middleware on
+// the whole API router, leaking the admin gate onto every route mounted after it
+// (records, feedback, audit, tokens, etc.) and blocking non-admin users.
+router.use(requireAuth, schemaRouter);
+router.use(requireAuth, adminRouter);
 router.use(requireAuth, recordsRouter);
 router.use(requireAuth, feedbackRouter);
 router.use(requireAuth, auditRouter);
@@ -38,7 +46,13 @@ router.use(requireAuth, searchRouter);
 router.use(requireAuth, savedViewsRouter);
 router.use(requireAuth, notificationsRouter);
 router.use(requireAuth, sessionsRouter);
-router.use(requireAuth, requireAdmin, metricsRouter);
-router.use(requireAuth, requireAdmin, backupRouter);
+router.use(requireAuth, collectionsRouter);
+router.use(requireAuth, analysisRouter);
+// Tour config: each route enforces its own auth (config read = any authed user,
+// save/upload/delete = admin, media serve = public). Do NOT wrap in requireAuth
+// here or the public /api/tour-media GET would be blocked.
+router.use(tourConfigRouter);
+router.use(requireAuth, metricsRouter);
+router.use(requireAuth, backupRouter);
 
 export default router;

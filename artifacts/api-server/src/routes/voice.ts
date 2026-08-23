@@ -28,7 +28,7 @@ function getOpenRouter(): OpenAI {
     apiKey:  key,
     baseURL: "https://openrouter.ai/api/v1",
     defaultHeaders: {
-      "HTTP-Referer": "https://replit.com",
+      "HTTP-Referer": process.env.APP_PUBLIC_URL ?? "",
       "X-Title": "Medical Voice Dictation",
     },
   });

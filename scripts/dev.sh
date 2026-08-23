@@ -40,8 +40,9 @@ PORT=3000 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mednexus" 
 # Wait for api-server to start
 sleep 3
 
-# Start frontend (proxies /api to localhost:3000)
-npx vite dev artifacts/research-data --host 0.0.0.0 --port 3004 &
+# Start frontend (proxies /api to the API server on localhost:3000)
+API_PROXY_TARGET="http://localhost:3000" \
+  npx vite dev artifacts/research-data --host 0.0.0.0 --port 3004 &
 
 echo ""
 echo "✓ Development environment started!"

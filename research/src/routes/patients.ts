@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import { getS3Config, putObject } from "../lib/s3";
 import { resolvePatient, parseRadiologyImages, parseRadiologyLinks } from "../lib/patients";
+import { ssrfCheck } from "../lib/security";
 
 const COLUMN_ALIASES: Record<string, string> = {
   collectionName: "collection_name",
@@ -376,6 +377,12 @@ export const patientsHandlers = {
 
       for (const url of urls) {
         try {
+          const ssrf = ssrfCheck(url);
+          if (!ssrf.ok) {
+            errors.push(`Blocked ${url}: ${ssrf.reason}`);
+            results.push({ url, status: "error" });
+            continue;
+          }
           const res = await fetch(url);
           if (!res.ok) {
             errors.push(`Failed to download ${url}: HTTP ${res.status}`);

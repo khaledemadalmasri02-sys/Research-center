@@ -173,6 +173,256 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, read);
 
+-- Research compliance: consent versions, patient consents, study protocols
+CREATE TABLE IF NOT EXISTS consent_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  irb_number TEXT,
+  text TEXT,
+  effective_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  retired_at DATETIME
+);
+CREATE INDEX IF NOT EXISTS idx_consent_versions_active ON consent_versions (retired_at);
+
+CREATE TABLE IF NOT EXISTS consents (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL,
+  consent_version_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'signed',
+  signed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  signed_by_user_id INTEGER,
+  withdrawn_at DATETIME,
+  withdrawn_reason TEXT,
+  document_object_key TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_consents_patient ON consents (patient_id);
+CREATE INDEX IF NOT EXISTS idx_consents_version ON consents (consent_version_id);
+
+CREATE TABLE IF NOT EXISTS study_protocols (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  irb_number TEXT,
+  pi_name TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- De-identification: pseudonym mapping + job log
+CREATE TABLE IF NOT EXISTS pseudonyms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL,
+  study_code TEXT NOT NULL,
+  pseudonym TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (patient_id, study_code)
+);
+CREATE INDEX IF NOT EXISTS idx_pseudonyms_patient ON pseudonyms (patient_id, study_code);
+
+CREATE TABLE IF NOT EXISTS deid_jobs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  scope TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  config_json TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  finished_at DATETIME
+);
+
+-- Record edit history (audit trail of record state changes)
+CREATE TABLE IF NOT EXISTS record_versions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id INTEGER NOT NULL,
+  user_id INTEGER,
+  version_no INTEGER NOT NULL,
+  data_snapshot TEXT NOT NULL,
+  change_summary TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_record_versions_record ON record_versions (record_id);
+
+-- Double data entry / inter-rater verification
+CREATE TABLE IF NOT EXISTS record_verifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id INTEGER NOT NULL,
+  second_user_id INTEGER,
+  second_data TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  conflict_fields TEXT,
+  concordance REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_record_verifications_record ON record_verifications (record_id);
+CREATE INDEX IF NOT EXISTS idx_record_verifications_status ON record_verifications (status);
+
+-- Standardized diagnosis coding (ICD-10 / SNOMED-CT)
+CREATE TABLE IF NOT EXISTS terminology_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code_system TEXT NOT NULL,
+  code TEXT NOT NULL,
+  display TEXT NOT NULL,
+  UNIQUE (code_system, code)
+);
+CREATE INDEX IF NOT EXISTS idx_terminology_search ON terminology_codes (code_system, code, display);
+
+CREATE TABLE IF NOT EXISTS diagnosis_codes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER,
+  record_id INTEGER,
+  code_system TEXT NOT NULL,
+  code TEXT NOT NULL,
+  display TEXT,
+  confidence REAL,
+  coded_by_user_id INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_diagnosis_codes_patient ON diagnosis_codes (patient_id);
+CREATE INDEX IF NOT EXISTS idx_diagnosis_codes_record ON diagnosis_codes (record_id);
+
+-- Starter ICD-10 / SNOMED subset
+INSERT OR IGNORE INTO terminology_codes (code_system, code, display) VALUES
+  ('ICD10', 'I10', 'Essential (primary) hypertension'),
+  ('ICD10', 'E11', 'Type 2 diabetes mellitus'),
+  ('ICD10', 'J45', 'Asthma'),
+  ('ICD10', 'A09', 'Infectious gastroenteritis and colitis, unspecified'),
+  ('ICD10', 'S06', 'Intracranial injury'),
+  ('ICD10', 'M54', 'Dorsalgia'),
+  ('ICD10', 'N39.0', 'Urinary tract infection, site not specified'),
+  ('ICD10', 'J18.9', 'Pneumonia, unspecified organism'),
+  ('ICD10', 'I21', 'Acute myocardial infarction'),
+  ('ICD10', 'F32', 'Depressive episode'),
+  ('SNOMED', '38341003', 'Hypertensive disorder, essential'),
+  ('SNOMED', '44054006', 'Type 2 diabetes mellitus'),
+  ('SNOMED', '195967001', 'Asthma');
+
+-- Validation rules engine
+CREATE TABLE IF NOT EXISTS validation_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  definition_id INTEGER NOT NULL DEFAULT 0,
+  field_key TEXT NOT NULL,
+  rule_type TEXT NOT NULL,
+  params TEXT NOT NULL DEFAULT '{}',
+  message TEXT,
+  severity TEXT NOT NULL DEFAULT 'error',
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_validation_rules_def ON validation_rules (definition_id);
+
+-- Phase 2.1 DICOM imaging metadata
+CREATE TABLE IF NOT EXISTS dicom_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL,
+  object_key TEXT NOT NULL,
+  modality TEXT,
+  body_part TEXT,
+  series_instance_uid TEXT,
+  study_instance_uid TEXT,
+  sop_instance_uid TEXT,
+  acquisition_date TEXT,
+  dicom_metadata TEXT,
+  is_deidentified INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_dicom_patient ON dicom_images (patient_id);
+CREATE INDEX IF NOT EXISTS idx_dicom_study ON dicom_images (study_instance_uid);
+
+-- radiology_images (storage metadata, mirrors db-bootstrap)
+CREATE TABLE IF NOT EXISTS radiology_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL,
+  study_id TEXT,
+  object_key TEXT NOT NULL,
+  original_filename TEXT,
+  mime_type TEXT,
+  file_size INTEGER,
+  etag TEXT,
+  upload_timestamp TEXT DEFAULT (datetime('now')),
+  metadata TEXT
+);
+
+-- Phase 4.2 Longitudinal studies, sites, arms, record events
+CREATE TABLE IF NOT EXISTS studies (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  irb_number TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  enrollment_target INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS sites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  study_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  country TEXT,
+  pi_user_id INTEGER,
+  enrollment_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_sites_study ON sites (study_id);
+CREATE TABLE IF NOT EXISTS study_arms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  study_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_study_arms_study ON study_arms (study_id);
+CREATE TABLE IF NOT EXISTS record_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id INTEGER NOT NULL,
+  event TEXT,
+  arm_id INTEGER,
+  repeat_instance INTEGER NOT NULL DEFAULT 1,
+  completed_at TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_record_events_record ON record_events (record_id);
+CREATE INDEX IF NOT EXISTS idx_record_events_arm ON record_events (arm_id);
+
+-- Phase 5 AI/ML provenance
+CREATE TABLE IF NOT EXISTS ml_models (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  artifact_object_key TEXT,
+  metrics_json TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS ml_predictions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id INTEGER,
+  image_id INTEGER,
+  model_id INTEGER NOT NULL,
+  output_json TEXT,
+  confidence REAL,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_model ON ml_predictions (model_id);
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_record ON ml_predictions (record_id);
+CREATE TABLE IF NOT EXISTS ml_groundtruth (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  record_id INTEGER NOT NULL,
+  label TEXT NOT NULL,
+  reviewed_by INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ml_groundtruth_record ON ml_groundtruth (record_id);
+CREATE TABLE IF NOT EXISTS ml_eval_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  model_id INTEGER NOT NULL,
+  auc REAL,
+  sensitivity REAL,
+  specificity REAL,
+  f1 REAL,
+  accuracy REAL,
+  sample_size INTEGER,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_ml_eval_model ON ml_eval_runs (model_id);
+
 -- Insert a test patient
 INSERT OR IGNORE INTO patients (patient_id, patient_name, age, sex) VALUES 
   ('P001', 'Test Patient', 30, 'Male');

@@ -3,6 +3,7 @@ import {
   Activity as ActivityIcon,
   LayoutDashboard,
   Users,
+  BarChart3,
   UserPlus,
   LogOut,
   Database,
@@ -13,13 +14,17 @@ import {
   KeyRound,
   Monitor,
   MoreHorizontal,
+  LayoutGrid,
+  HelpCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { motion } from "framer-motion";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useTranslation } from "react-i18next";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { openProductTour } from "@/hooks/use-product-tour";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { NotificationBell } from "@/components/notification-bell";
 import {
@@ -50,7 +55,9 @@ export function Layout({ children }: LayoutProps) {
     { key: "dashboard", href: "/", icon: LayoutDashboard },
     { key: "patients", href: "/patients", icon: Users },
     { key: "collections", href: "/collections", icon: FileText },
+    { key: "dataAnalysis", href: "/data-analysis", icon: BarChart3 },
     { key: "feedback", href: "/feedback", icon: MessageSquare },
+    { key: "moreFeatures", href: "/more-features", icon: LayoutGrid },
   ];
 
   const adminNav: NavItem[] = canAdminAccess
@@ -75,9 +82,25 @@ export function Layout({ children }: LayoutProps) {
 
   const Toggles = (
     <div className="flex items-center gap-0.5">
-      <NotificationBell />
-      <ThemeToggle />
-      <LanguageSwitcher />
+      <span data-tour="notifications">
+        <NotificationBell />
+      </span>
+      <span data-tour="theme">
+        <ThemeToggle />
+      </span>
+      <span data-tour="language">
+        <LanguageSwitcher />
+      </span>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-11 w-11 text-muted-foreground"
+        title={t("tour.replay")}
+        aria-label={t("tour.replay")}
+        onClick={() => openProductTour()}
+      >
+        <HelpCircle className="h-5 w-5" />
+      </Button>
     </div>
   );
 
@@ -123,19 +146,31 @@ export function Layout({ children }: LayoutProps) {
 
         <nav className="fixed bottom-0 inset-x-0 z-20 h-16 border-t border-border bg-card flex justify-around items-stretch">
           {mainNav.map((item) => {
-            const active = isActive(item.href);
-            return (
-              <Link key={item.key} href={item.href}>
-                <div
-                  className={cn(
-                    "flex flex-col items-center justify-center gap-1 h-16 w-16 text-[11px] font-medium",
-                    active ? "text-primary" : "text-muted-foreground",
-                  )}
-                >
-                  <item.icon className={cn("h-5 w-5", active ? "text-primary" : "text-muted-foreground")} />
-                  <span className="leading-none">{t(`nav.${item.key}`)}</span>
-                </div>
-              </Link>
+          const active = isActive(item.href);
+          return (
+          <Link key={item.key} href={item.href} data-tour={item.key}>
+          <motion.div
+          className={cn(
+          "relative flex flex-col items-center justify-center gap-1 h-16 w-16 text-[11px] font-medium",
+          active ? "text-primary" : "text-muted-foreground",
+          )}
+            whileTap={{ scale: 0.9 }}
+          whileHover={{ y: -2 }}
+          transition={{ type: "spring", stiffness: 400, damping: 24 }}
+          >
+            {active && (
+                <motion.span
+                    layoutId="sidebar-active"
+                    className="absolute top-1 bottom-1 w-10 rounded-md bg-primary/10"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <item.icon className={cn("relative z-10 h-5 w-5", active ? "text-primary" : "text-muted-foreground")} />
+                <span className="relative z-10 leading-none">{t(`nav.${item.key}`)}</span>
+              </motion.div>
+            </Link>
             );
           })}
         </nav>
@@ -157,19 +192,31 @@ export function Layout({ children }: LayoutProps) {
           {allNav.map((item) => {
             const active = isActive(item.href);
             return (
-              <Link key={item.key} href={item.href}>
-                <div
-                  className={cn(
-                    "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer",
-                    active
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:bg-secondary hover:text-foreground",
-                  )}
-                >
-                  <item.icon className={cn("h-5 w-5", active ? "text-primary-foreground" : "text-muted-foreground")} />
-                  {t(`nav.${item.key}`)}
-                </div>
-              </Link>
+            <Link key={item.key} href={item.href} data-tour={item.key}>
+              <motion.div
+                className={cn(
+                  "relative flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer",
+                  active
+                    ? "text-primary-foreground"
+                    : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+                )}
+                whileHover={{ x: 3 }}
+                whileTap={{ scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 400, damping: 28 }}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="sidebar-active"
+                    className="absolute inset-0 -z-10 rounded-md bg-primary"
+                    initial={{ scale: 0.9, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                  />
+                )}
+                <item.icon className={cn("relative z-10 h-5 w-5", active ? "text-primary-foreground" : "text-muted-foreground")} />
+                <span className="relative z-10">{t(`nav.${item.key}`)}</span>
+              </motion.div>
+            </Link>
             );
           })}
         </nav>

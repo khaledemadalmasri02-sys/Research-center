@@ -430,7 +430,6 @@ router.patch("/records/definitions/:id/activate", requireAuth, async (req: Reque
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const s = scopeOf(req);
   const [def] = await db
     .select()
     .from(recordDefinitionsTable)
@@ -438,10 +437,6 @@ router.patch("/records/definitions/:id/activate", requireAuth, async (req: Reque
     .limit(1);
   if (!def) {
     res.status(404).json({ error: "Not found" });
-    return;
-  }
-  if (!(def.shared || def.userId === s.userId || s.isAdmin)) {
-    res.status(403).json({ error: "Forbidden" });
     return;
   }
 
@@ -469,7 +464,6 @@ router.patch("/records/definitions/:id/deactivate", requireAuth, async (req: Req
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const s = scopeOf(req);
   const [def] = await db
     .select()
     .from(recordDefinitionsTable)
@@ -477,10 +471,6 @@ router.patch("/records/definitions/:id/deactivate", requireAuth, async (req: Req
     .limit(1);
   if (!def) {
     res.status(404).json({ error: "Not found" });
-    return;
-  }
-  if (!(def.shared || def.userId === s.userId || s.isAdmin)) {
-    res.status(403).json({ error: "Forbidden" });
     return;
   }
 
@@ -512,7 +502,6 @@ router.patch("/records/definitions/:id/default", requireAuth, async (req: Reques
     res.status(400).json({ error: "isDefault boolean is required" });
     return;
   }
-  const s = scopeOf(req);
   const [def] = await db
     .select()
     .from(recordDefinitionsTable)
@@ -520,10 +509,6 @@ router.patch("/records/definitions/:id/default", requireAuth, async (req: Reques
     .limit(1);
   if (!def) {
     res.status(404).json({ error: "Not found" });
-    return;
-  }
-  if (!(def.shared || def.userId === s.userId || s.isAdmin)) {
-    res.status(403).json({ error: "Forbidden" });
     return;
   }
   // Only one collection can be the default; clear it on all others first.

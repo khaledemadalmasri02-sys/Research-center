@@ -57,5 +57,18 @@ export default defineConfig({
     port: 3004,
     host: "0.0.0.0",
     allowedHosts: true,
+    // In local/self-hosted dev the API server runs on a different port than the
+    // Vite dev server, so proxy /api there. On hosted platforms that route /api
+    // to the API server via a path-based proxy, leave this unset.
+    ...(process.env.API_PROXY_TARGET
+      ? {
+          proxy: {
+            "/api": {
+              target: process.env.API_PROXY_TARGET,
+              changeOrigin: true,
+            },
+          },
+        }
+      : {}),
   },
 });

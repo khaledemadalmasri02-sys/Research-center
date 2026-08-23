@@ -31,9 +31,9 @@ interface UserDataResponse {
 
 function useUsers() {
   return useQuery<UserRow[]>({
-    queryKey: ["admin-users"],
+    queryKey: ["database-users"],
     queryFn: async () => {
-      const res = await fetch("/api/admin/users", { credentials: "include" });
+      const res = await fetch("/api/users", { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch users");
       const body = await res.json();
       return body.users as UserRow[];
@@ -45,7 +45,7 @@ function useUserData(id: number | null) {
   return useQuery<UserDataResponse>({
     queryKey: ["admin-user-data", id],
     queryFn: async () => {
-      const res = await fetch(`/api/admin/users/${id}/data`, { credentials: "include" });
+      const res = await fetch(`/api/users/${id}/data`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to fetch user data");
       return res.json();
     },

@@ -40,6 +40,10 @@ export const s3Client = new S3Client({
   },
 });
 
+if (process.env.NODE_ENV === "production" && (!s3AccessKey || !s3SecretKey)) {
+  throw new Error("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set in production");
+}
+
 export class ObjectNotFoundError extends Error {
   constructor(message = "Object not found") {
     super(message);

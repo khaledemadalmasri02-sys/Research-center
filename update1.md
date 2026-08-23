@@ -274,3 +274,25 @@ All seven #8 features are implemented in code and pass `pnpm run typecheck`:
 - **#8.7** — `routes/sessions.ts` + `sessions.tsx` (list/revoke own sessions).
 
 New env (optional): `SMTP_HOST/PORT/SECURE/USER/PASS/FROM` for email notifications; `S3_BUCKET` for backups.
+
+---
+
+## D1 worker addendum (same feature set, served from the edge)
+
+The Cloudflare Worker (`research/src`) now mirrors the api-server feature set
+directly on D1 so it works standalone. Beyond the users/RBAC/tokens/audit/
+notifications/feedback/sessions already present, this session added:
+
+- **#8.3** — `routes/search.ts` (`/api/search` parameterized; `/api/saved-views`
+  CRUD) on the worker.
+- **#8.1** — `routes/audit.ts` (`/api/audit` admin global + `/api/audit/me`).
+- **Security (Phase A1 / C)** — `lib/security.ts` `ssrfCheck()` (wired into
+  `patients.ts` image import) + `csrfGuard()` / `issueCsrfToken()` applied to
+  the `/api/*` proxy (`GET /api/csrf` issues the token).
+- **CI + dual-DB guard** — `.github/workflows/ci.yml` and
+  `research/scripts/check-schema.mjs` enforce `schema.sql` ↔ `db-bootstrap.ts`
+  table parity (caught & fixed a drift where `validation_rules`, `patients`,
+  `sessions`, `feedback` were missing from the runtime bootstrap).
+
+Verified: `tsc --noEmit` + `pnpm test` → 97 tests pass; schema check green (32
+tables in both sources).

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, Lock } from "lucide-react";
+import { FadeIn } from "@/lib/motion";
 
 export default function Login() {
   const { login, isLoggingIn, loginError } = useAuth();
@@ -25,16 +26,14 @@ export default function Login() {
   const error = localError ?? loginError;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-slate-100">
+    <div className="min-h-screen flex items-center justify-center auth-gradient">
       <div className="w-full max-w-sm">
-        <div className="bg-white rounded-2xl shadow-lg border p-8 space-y-6">
-          <div className="text-center space-y-2">
+        <FadeIn className="bg-white dark:bg-card text-card-foreground rounded-2xl shadow-lg border p-8 space-y-6">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-teal-100 mb-2">
               <Lock className="w-6 h-6 text-teal-700" />
             </div>
             <h1 className="text-2xl font-bold tracking-tight">MedResearch</h1>
             <p className="text-sm text-muted-foreground">Sign in to access patient records</p>
-          </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-1.5">
@@ -82,7 +81,7 @@ export default function Login() {
               Request access
             </Link>
           </p>
-        </div>
+      </FadeIn>
       </div>
     </div>
   );

@@ -7,3 +7,4 @@ export * from "./feedback";
 export * from "./api_tokens";
 export * from "./saved_views";
 export * from "./notifications";
+export * from "./analysis";

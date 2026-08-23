@@ -1,4 +1,22 @@
 import { Hono, Context } from "hono";
+import { ensureSchema } from "./lib/db-bootstrap";
+import { consentApp } from "./routes/consent";
+import { deidentifyApp } from "./routes/deidentify";
+import { recordVersionsApp } from "./routes/recordVersions";
+import { recordVerifyApp } from "./routes/recordVerify";
+import { codingApp } from "./routes/coding";
+import { cohortApp } from "./routes/cohort";
+import { validationApp } from "./routes/validation";
+import { dicomApp } from "./routes/dicom";
+import { exportApp } from "./routes/export";
+import { studiesApp } from "./routes/studies";
+import { mlApp } from "./routes/ml";
+import { reportsApp } from "./routes/reports";
+import { gdprApp } from "./routes/gdpr";
+import { ingestApp } from "./routes/ingest";
+import { searchApp } from "./routes/search";
+import { issueCsrfToken } from "./lib/security";
+import type { AppBindings, AppVariables, AppContext } from "./lib/env";
 
 // This Worker now acts as a thin edge layer for research-center.fit:
 //   - static SPA assets are served by Cloudflare Assets (run_worker_first=/api/*)
@@ -6,14 +24,99 @@ import { Hono, Context } from "hono";
 //     (exposed locally via a cloudflared tunnel). This makes the FULL feature
 //     set (records, signup, users, admin, feedback, patients) available at the
 //     domain, sourced from the api-server rather than D1.
-const app = new Hono<{
-  Bindings: {
-    API_BACKEND_URL: string;
-    ASSETS: { fetch: (input: RequestInfo, init?: RequestInit) => Promise<Response> };
-  };
-}>();
+const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>({ strict: false });
 
-app.all("/api/*", async (c: Context) => {
+// Inject a self-referential, per-host canonical <link> into every HTML document
+// so both research-center.fit and www.research-center.fit are independently
+// indexable by Google (no cross-host redirect / no duplicate-content penalty).
+const CANONICAL_HOSTS = new Set([
+  "research-center.fit",
+  "www.research-center.fit",
+]);
+
+app.use("*", async (c, next) => {
+  if (c.req.path.startsWith("/api/")) return next();
+
+  const assets = c.env.ASSETS;
+  if (!assets) return next();
+
+  const res = await assets.fetch(c.req.url);
+  const contentType = res.headers.get("content-type") || "";
+  if (!contentType.includes("text/html")) return res;
+
+  const url = new URL(c.req.url);
+  if (!CANONICAL_HOSTS.has(url.host)) return res;
+
+  let body = await res.text();
+  const canonical = `${url.origin}${url.pathname}`;
+  if (!body.includes('rel="canonical"')) {
+    body = body.replace("</head>", `  <link rel="canonical" href="${canonical}" />\n</head>`);
+  }
+
+  // Host-aware WebSite structured data so Google associates the site with the
+  // "research center" / "research" topics (the hyphenated domain already reads
+  // as the phrase, and this reinforces it for both hosts).
+  if (!body.includes('type="application/ld+json"')) {
+    const jsonLd = {
+      "@context": "https://schema.org",
+      "@type": "WebSite",
+      name: "Research Center",
+      url: url.origin + "/",
+      description:
+        "Research Center for patient research: secure radiology patient data collection, medical image storage, and AI prediction tracking.",
+      sameAs: [
+        "https://research-center.fit/",
+        "https://www.research-center.fit/",
+      ],
+    };
+    const script = `  <script type="application/ld+json">${JSON.stringify(jsonLd)}</script>\n`;
+    body = body.replace("</head>", `${script}</head>`);
+  }
+
+  const headers = new Headers(res.headers);
+  headers.delete("content-length");
+  return new Response(body, { status: res.status, headers });
+});
+
+
+// directly from D1 so they work even when API_BACKEND_URL is not configured.
+// Schema is bootstrapped idempotently on first request.
+app.use("/api/*", async (c, next) => {
+  try {
+    await ensureSchema(c.env.DB);
+  } catch {
+    /* ignore bootstrap failures; handlers will surface DB errors */
+  }
+  await next();
+});
+
+app.route("/api/consent", consentApp);
+app.route("/api/deidentify", deidentifyApp);
+app.route("/api/record-versions", recordVersionsApp);
+app.route("/api/record-verify", recordVerifyApp);
+app.route("/api/codings", codingApp);
+app.route("/api/cohort", cohortApp);
+app.route("/api/validation", validationApp);
+app.route("/api/dicom", dicomApp);
+app.route("/api/export", exportApp);
+app.route("/api/studies", studiesApp);
+app.route("/api/ml", mlApp);
+app.route("/api/reports", reportsApp);
+app.route("/api/gdpr", gdprApp);
+app.route("/api/ingest", ingestApp);
+app.route("/api/search", searchApp);
+// /api/saved-views is handled by the Postgres-backed api-server (proxied below),
+// so it shares the same session as the rest of the records feature.
+
+// CSRF token issuance for session-cookie clients (double-submit pattern).
+app.get("/api/csrf", (c: AppContext) => {
+  const token = issueCsrfToken(c);
+  return c.json({ csrfToken: token });
+});
+
+// Proxy to the Postgres-backed api-server. CSRF-protected for session-cookie
+// clients; Bearer/API-token requests are exempt (see csrfGuard).
+async function proxyToBackend(c: AppContext): Promise<Response> {
   const base = (c.env.API_BACKEND_URL || "").replace(/\/+$/, "");
   if (!base) {
     return c.json({ error: "API_BACKEND_URL is not configured" }, 500);
@@ -22,13 +125,15 @@ app.all("/api/*", async (c: Context) => {
   const url = new URL(c.req.url);
   const target = `${base}${url.pathname}${url.search}`;
 
-  // Forward the original request (method, headers, body, cookies) and tell the
-  // api-server the real client IP for rate-limiting / audit. Build the request
-  // explicitly (rather than `new Request(target, c.req.raw)`) so the Cookie
-  // header is reliably copied through to the origin.
+  // The Worker is a reverse proxy to the api-server. Present the backend's own
+  // origin (not the front-end's, e.g. https://www.research-center.fit) so the
+  // api-server's same-origin / allowed-origin CSRF guard accepts requests from
+  // any front-end hostname without enumerating each in ALLOWED_ORIGINS.
+  const headers = new Headers(c.req.raw.headers);
+  headers.set("origin", base);
   const init: RequestInit = {
     method: c.req.method,
-    headers: c.req.raw.headers,
+    headers,
   };
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
     init.body = c.req.raw.body;
@@ -41,12 +146,21 @@ app.all("/api/*", async (c: Context) => {
 
   const res = await fetch(req);
   return res;
+}
+
+// Proxy to the Postgres-backed api-server. These routes are owned by the
+// api-server, which is the session authority (it issues the `connect.sid`
+// cookie). CSRF is therefore enforced at the api-server, not here — applying the
+// Worker's separate CSRF cookie to these proxied requests only broke auth. The
+// Worker's own D1-backed routes above remain the Worker's responsibility.
+app.all("/api/*", async (c: AppContext) => {
+  return proxyToBackend(c);
 });
 
 // Non-API requests are served by Static Assets (SPA). Because of
 // run_worker_first = ["/api/*"], this handler is only reached for unmatched
 // API routes; in that case we surface a 404.
-app.all("*", async (c: Context) => {
+app.all("*", async (c: AppContext) => {
   const assets = c.env.ASSETS;
   if (assets) {
     const res = await assets.fetch(c.req.url);

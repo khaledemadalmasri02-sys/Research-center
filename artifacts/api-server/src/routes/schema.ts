@@ -1,10 +1,11 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { writeAudit, clientIp } from "../lib/audit";
+import { requireAdmin } from "../middlewares/requireAdmin";
 
 const router: IRouter = Router();
 
-router.get("/db/tables", async (_req: Request, res: Response) => {
+router.get("/db/tables", requireAdmin, async (_req: Request, res: Response) => {
   const result = await pool.query(`
     SELECT
       table_name,
@@ -33,22 +34,32 @@ router.get("/db/tables", async (_req: Request, res: Response) => {
   res.json({ tables });
 });
 
+// Tables an admin may read through the DB viewer. Sensitive/auth tables
+// (users, api_tokens, session, signup_requests) are excluded to avoid
+// exposing credentials, tokens, and PII en masse.
+const SAFE_TABLES = new Set([
+  "patients",
+  "records",
+  "record_definitions",
+  "record_images",
+  "feedback",
+  "audit_log",
+  "notifications",
+  "saved_views",
+  "record_definitions",
+]);
+
 // Only allow reading tables that actually exist in the public schema.
 // The table name is validated against the live catalog and never interpolated
 // unsafely — limit/offset are passed as bound parameters.
-router.get("/db/:table", async (req: Request, res: Response) => {
+router.get("/db/:table", requireAdmin, async (req: Request, res: Response) => {
   const table = String(req.params.table);
   const limit = Math.min(parseInt(req.query.limit as string) || 100, 1000);
   const offset = parseInt(req.query.offset as string) || 0;
 
   try {
-    const allowed = await pool.query(
-      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`
-    );
-    const names = allowed.rows.map((r: { table_name: string }) => r.table_name);
-
-    if (!names.includes(table)) {
-      res.status(400).json({ error: `Table "${table}" not found or inaccessible` });
+    if (!SAFE_TABLES.has(table)) {
+      res.status(403).json({ error: `Table "${table}" is not readable through this endpoint` });
       return;
     }
 

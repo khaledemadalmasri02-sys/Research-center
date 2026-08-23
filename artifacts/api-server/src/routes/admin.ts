@@ -12,8 +12,12 @@ const router: IRouter = Router();
 const ALLOWED_ROLES = new Set(["admin", "editor", "viewer"]);
 const ALLOWED_STATUSES = new Set(["active", "pending", "suspended"]);
 
+function isUniqueViolation(e: unknown): boolean {
+  return (e as { code?: string })?.code === "23505";
+}
+
 // List sign-up requests (admin only)
-router.get("/signups", async (_req: Request, res: Response) => {
+router.get("/signups", requireAdmin, async (_req: Request, res: Response) => {
   const requests = await db
     .select()
     .from(signupRequestsTable)
@@ -22,7 +26,7 @@ router.get("/signups", async (_req: Request, res: Response) => {
 });
 
 // Approve a sign-up request -> creates a website-only user account
-router.post("/signups/:id/approve", async (req: Request, res: Response) => {
+router.post("/signups/:id/approve", requireAdmin, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -45,25 +49,40 @@ router.post("/signups/:id/approve", async (req: Request, res: Response) => {
     return;
   }
 
-  const [created] = await db
-    .insert(usersTable)
-    .values({
-      username: request.username,
-      passwordHash: request.passwordHash,
-      fullName: request.fullName,
-      email: request.email,
-      role: "editor",
-      canAdminAccess: false,
-      status: "active",
-      createdBy: req.session.userId ?? null,
-    })
-    .returning({
-      id: usersTable.id,
-      username: usersTable.username,
-      role: usersTable.role,
-      canAdminAccess: usersTable.canAdminAccess,
-      status: usersTable.status,
-    });
+  let created: {
+    id: number;
+    username: string;
+    role: string;
+    canAdminAccess: boolean;
+    status: string;
+  };
+  try {
+    [created] = await db
+      .insert(usersTable)
+      .values({
+        username: request.username,
+        passwordHash: request.passwordHash,
+        fullName: request.fullName,
+        email: request.email,
+        role: "editor",
+        canAdminAccess: false,
+        status: "active",
+        createdBy: req.session.userId ?? null,
+      })
+      .returning({
+        id: usersTable.id,
+        username: usersTable.username,
+        role: usersTable.role,
+        canAdminAccess: usersTable.canAdminAccess,
+        status: usersTable.status,
+      });
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      res.status(409).json({ error: "A user with this username already exists." });
+      return;
+    }
+    throw e;
+  }
 
   await writeAudit({
     userId: req.session.userId ?? null,
@@ -94,7 +113,7 @@ router.post("/signups/:id/approve", async (req: Request, res: Response) => {
 });
 
 // Reject a sign-up request
-router.post("/signups/:id/reject", async (req: Request, res: Response) => {
+router.post("/signups/:id/reject", requireAdmin, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -136,7 +155,7 @@ router.post("/signups/:id/reject", async (req: Request, res: Response) => {
 });
 
 // List users (admin only)
-router.get("/users", async (_req: Request, res: Response) => {
+router.get("/users", requireAdmin, async (_req: Request, res: Response) => {
   const users = await db
     .select({
       id: usersTable.id,
@@ -154,7 +173,7 @@ router.get("/users", async (_req: Request, res: Response) => {
 });
 
 // Admin directly creates a user (e.g. another admin)
-router.post("/users", async (req: Request, res: Response) => {
+router.post("/users", requireAdmin, async (req: Request, res: Response) => {
   const { username, password, fullName, email, role, canAdminAccess } = req.body as {
     username?: string;
     password?: string;
@@ -183,25 +202,40 @@ router.post("/users", async (req: Request, res: Response) => {
   }
 
   const passwordHash = await hashPassword(password);
-  const [created] = await db
-    .insert(usersTable)
-    .values({
-      username,
-      passwordHash,
-      fullName: fullName ?? null,
-      email: email ?? null,
-      role: safeRole,
-      canAdminAccess: safeCanAdmin,
-      status: "active",
-      createdBy: req.session.userId ?? null,
-    })
-    .returning({
-      id: usersTable.id,
-      username: usersTable.username,
-      role: usersTable.role,
-      canAdminAccess: usersTable.canAdminAccess,
-      status: usersTable.status,
-    });
+  let created: {
+    id: number;
+    username: string;
+    role: string;
+    canAdminAccess: boolean;
+    status: string;
+  };
+  try {
+    [created] = await db
+      .insert(usersTable)
+      .values({
+        username,
+        passwordHash,
+        fullName: fullName ?? null,
+        email: email ?? null,
+        role: safeRole,
+        canAdminAccess: safeCanAdmin,
+        status: "active",
+        createdBy: req.session.userId ?? null,
+      })
+      .returning({
+        id: usersTable.id,
+        username: usersTable.username,
+        role: usersTable.role,
+        canAdminAccess: usersTable.canAdminAccess,
+        status: usersTable.status,
+      });
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      res.status(409).json({ error: "Username already taken." });
+      return;
+    }
+    throw e;
+  }
 
   await writeAudit({
     userId: req.session.userId ?? null,
@@ -216,7 +250,7 @@ router.post("/users", async (req: Request, res: Response) => {
 });
 
 // Update a user (role, admin access, status)
-router.patch("/users/:id", async (req: Request, res: Response) => {
+router.patch("/users/:id", requireAdmin, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -290,7 +324,7 @@ router.patch("/users/:id", async (req: Request, res: Response) => {
 });
 
 // Delete a user (cannot delete self or the last admin)
-router.delete("/users/:id", async (req: Request, res: Response) => {
+router.delete("/users/:id", requireAdmin, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -331,7 +365,7 @@ router.delete("/users/:id", async (req: Request, res: Response) => {
 
 // User data drill-down (admin only): the user's profile, the collections they
 // own/created, and a sample of their records.
-router.get("/users/:id/data", async (req: Request, res: Response) => {
+router.get("/users/:id/data", requireAdmin, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });

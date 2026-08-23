@@ -15,6 +15,7 @@ import {
   getIpFailures,
   validUsername,
   strongPassword,
+  isUniqueViolation,
 } from "../lib/security";
 
 const SIGNUP_RATE_LIMIT = 10; // per IP per 10 min
@@ -55,18 +56,25 @@ export const authHandlers = {
         .first();
       if (existingReq) return c.json({ error: "A pending request already exists." }, 409);
 
-      await c.env.DB.prepare(
-        `INSERT INTO signup_requests (username, password_hash, full_name, email, reason, status)
-         VALUES (?, ?, ?, ?, ?, 'pending')`
-      )
-        .bind(
-          body.username,
-          hashPassword(body.password!),
-          body.fullName || null,
-          body.email || null,
-          body.reason || null
+      try {
+        await c.env.DB.prepare(
+          `INSERT INTO signup_requests (username, password_hash, full_name, email, reason, status)
+           VALUES (?, ?, ?, ?, ?, 'pending')`
         )
-        .run();
+          .bind(
+            body.username,
+            hashPassword(body.password!),
+            body.fullName || null,
+            body.email || null,
+            body.reason || null
+          )
+          .run();
+      } catch (e) {
+        if (isUniqueViolation(e)) {
+          return c.json({ error: "Username already taken." }, 409);
+        }
+        throw e;
+      }
 
       await writeAudit(c, {
         action: "auth.signup.request",

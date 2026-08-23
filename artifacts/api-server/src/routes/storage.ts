@@ -11,9 +11,26 @@ import { db, patientsTable, pool } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { radiologyImageService } from "../lib/radiologyImages";
 import { logger } from "../lib/logger";
+import { requireAuth } from "./auth";
+import { safeFetch } from "../lib/ssrf";
+
+// Only these image MIME types are accepted; SVG/XML/HTML are rejected to
+// prevent stored XSS via uploaded "images".
+const ALLOWED_IMAGE_CONTENT_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+const MAX_IMPORT_BYTES = 20 * 1024 * 1024; // 20 MB cap
+// Object reads are restricted to the application's own prefixes.
+const ALLOWED_OBJECT_PREFIXES = ["radiology/"];
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
+
+// Authenticate every storage route except the public object viewer and the
+// anonymous health check. Previously the entire router was open, exposing
+// private radiology images and allowing unauthenticated uploads / SSRF.
+router.use("/storage/objects", requireAuth);
+router.use("/storage/uploads", requireAuth);
+router.use("/storage/images", requireAuth);
+router.use("/storage/ensure-bucket", requireAuth);
 
 async function discoverImagesByPatientId(patientId: string): Promise<string[]> {
   if (!patientId) return [];
@@ -80,6 +97,7 @@ async function streamObject(res: Response, bucket: string, key: string): Promise
   if (!body) throw new Error("Empty object body");
   res.setHeader("Content-Type", out.ContentType || "application/octet-stream");
   res.setHeader("Cache-Control", "private, max-age=3600");
+  res.setHeader("X-Content-Type-Options", "nosniff");
   if (out.ContentLength) res.setHeader("Content-Length", String(out.ContentLength));
   if (out.ContentDisposition) res.setHeader("Content-Disposition", out.ContentDisposition);
   const nodeStream = body as Readable;
@@ -231,7 +249,13 @@ router.get("/storage/objects/*path", async (req: Request, res: Response) => {
   try {
     const raw = req.params.path;
     const objectKey = Array.isArray(raw) ? raw.join("/") : raw;
-    
+
+    // Prevent reading objects outside the application's own prefixes.
+    if (!ALLOWED_OBJECT_PREFIXES.some((p) => objectKey.startsWith(p))) {
+      res.status(403).json({ error: "Access to this object is forbidden" });
+      return;
+    }
+
     const bucket = objectStorageService.getBucket();
     await streamObject(res, bucket, objectKey);
   } catch (error) {
@@ -278,17 +302,25 @@ router.post("/storage/images/import", async (req: Request, res: Response) => {
   }
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      res.status(400).json({ error: `Failed to fetch image from URL: HTTP ${response.status}` });
+    let response: Awaited<ReturnType<typeof safeFetch>>;
+    try {
+      response = await safeFetch(url, {
+        timeoutMs: 15_000,
+        maxBytes: MAX_IMPORT_BYTES,
+        allowedContentTypes: ["image/"],
+      });
+    } catch {
+      res.status(400).json({ error: "Failed to fetch image from URL (blocked or unsupported)" });
       return;
     }
 
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
-    if (!contentType.startsWith("image/")) {
-      res.status(400).json({ error: `URL does not point to an image (content-type: ${contentType})` });
+    const rawContentType = response.headers.get("content-type") || "application/octet-stream";
+    // Reject scriptable types (SVG/XML) to prevent stored XSS.
+    if (!ALLOWED_IMAGE_CONTENT_TYPES.includes(rawContentType.toLowerCase())) {
+      res.status(400).json({ error: `URL does not point to a supported image (content-type: ${rawContentType})` });
       return;
     }
+    const contentType = rawContentType.toLowerCase();
 
     const arrayBuffer = await response.arrayBuffer();
     const body = new Uint8Array(arrayBuffer);
@@ -337,17 +369,25 @@ router.post("/storage/images/by-patient", async (req: Request, res: Response) =>
   }
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      res.status(400).json({ error: `Failed to fetch image from URL: HTTP ${response.status}` });
+    let response: Awaited<ReturnType<typeof safeFetch>>;
+    try {
+      response = await safeFetch(url, {
+        timeoutMs: 15_000,
+        maxBytes: MAX_IMPORT_BYTES,
+        allowedContentTypes: ["image/"],
+      });
+    } catch {
+      res.status(400).json({ error: "Failed to fetch image from URL (blocked or unsupported)" });
       return;
     }
 
-    const contentType = response.headers.get("content-type") || "application/octet-stream";
-    if (!contentType.startsWith("image/")) {
-      res.status(400).json({ error: `URL does not point to an image (content-type: ${contentType})` });
+    const rawContentType = response.headers.get("content-type") || "application/octet-stream";
+    // Reject scriptable types (SVG/XML) to prevent stored XSS.
+    if (!ALLOWED_IMAGE_CONTENT_TYPES.includes(rawContentType.toLowerCase())) {
+      res.status(400).json({ error: `URL does not point to a supported image (content-type: ${rawContentType})` });
       return;
     }
+    const contentType = rawContentType.toLowerCase();
 
     const arrayBuffer = await response.arrayBuffer();
     const body = new Uint8Array(arrayBuffer);
@@ -471,7 +511,13 @@ router.post("/storage/upload-file", async (req: Request, res: Response) => {
   try {
     const fileData = req.body?.fileData as string | undefined;
     const filename = req.body?.filename as string | undefined;
-    const contentType = req.body?.contentType as string | undefined;
+    const declaredContentType = req.body?.contentType as string | undefined;
+    // Never trust the caller's content type for stored objects; reject
+    // scriptable types (SVG/XML) to prevent stored XSS.
+    const contentType =
+      declaredContentType && ALLOWED_IMAGE_CONTENT_TYPES.includes(declaredContentType.toLowerCase())
+        ? declaredContentType.toLowerCase()
+        : "image/jpeg";
     
     if (!fileData) {
       res.status(400).json({ error: "No file data provided (fileData as base64)" });

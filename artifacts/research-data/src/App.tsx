@@ -3,8 +3,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Suspense, lazy } from "react";
+import { AnimatePresence, MotionConfig, motion } from "framer-motion";
+import { useLocation } from "wouter";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
+import { ProductTour } from "@/components/product-tour";
+import { EASE_OUT } from "@/lib/motion";
 
 const queryClient = new QueryClient();
 
@@ -27,12 +31,44 @@ const ActivityMe = lazy(() => import("@/pages/activity-me"));
 const ApiTokens = lazy(() => import("@/pages/api-tokens"));
 const Sessions = lazy(() => import("@/pages/sessions"));
 const NotFound = lazy(() => import("@/pages/not-found"));
+const MoreFeatures = lazy(() => import("@/pages/more-features"));
+const Consent = lazy(() => import("@/pages/consent"));
+const Deidentify = lazy(() => import("@/pages/deidentify"));
+const Coding = lazy(() => import("@/pages/coding"));
+const Cohort = lazy(() => import("@/pages/cohort"));
+const ValidationPage = lazy(() => import("@/pages/validation"));
+const Dicom = lazy(() => import("@/pages/dicom"));
+const ExportPage = lazy(() => import("@/pages/export"));
+const Studies = lazy(() => import("@/pages/studies"));
+const Ml = lazy(() => import("@/pages/ml"));
+const Reports = lazy(() => import("@/pages/reports"));
+const Gdpr = lazy(() => import("@/pages/gdpr"));
+const Ingest = lazy(() => import("@/pages/ingest"));
+const SearchPage = lazy(() => import("@/pages/search"));
+const DataAnalysis = lazy(() => import("@/pages/data-analysis"));
 
 function LoadingSpinner() {
   return (
     <div className="min-h-screen flex items-center justify-center">
       <Loader2 className="h-8 w-8 animate-spin text-primary" />
     </div>
+  );
+}
+
+function AnimatedRoutes({ children }: { children: React.ReactNode }) {
+  const [location] = useLocation();
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <motion.div
+        key={location}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -8 }}
+        transition={{ duration: 0.28, ease: EASE_OUT }}
+      >
+        <Suspense fallback={<LoadingSpinner />}>{children}</Suspense>
+      </motion.div>
+    </AnimatePresence>
   );
 }
 
@@ -46,17 +82,18 @@ function ProtectedRoutes() {
   // Public routes
   if (!authenticated) {
     return (
-      <Suspense fallback={<LoadingSpinner />}>
+      <AnimatedRoutes>
         <Switch>
           <Route path="/signup" component={Signup} />
           <Route component={Login} />
         </Switch>
-      </Suspense>
+      </AnimatedRoutes>
     );
   }
 
   return (
-    <Suspense fallback={<LoadingSpinner />}>
+    <>
+      <AnimatedRoutes>
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/patients" component={Patients} />
@@ -76,22 +113,41 @@ function ProtectedRoutes() {
           {canAdminAccess && <Route path="/database" component={Database} />}
           {canAdminAccess && <Route path="/activity" component={Activity} />}
         {canAdminAccess && <Route path="/admin" component={Admin} />}
+        <Route path="/more-features" component={MoreFeatures} />
+        <Route path="/consent" component={Consent} />
+        <Route path="/deidentify" component={Deidentify} />
+        <Route path="/coding" component={Coding} />
+        <Route path="/cohort" component={Cohort} />
+        <Route path="/validation" component={ValidationPage} />
+        <Route path="/dicom" component={Dicom} />
+        <Route path="/export" component={ExportPage} />
+        <Route path="/studies" component={Studies} />
+        <Route path="/ml" component={Ml} />
+        <Route path="/reports" component={Reports} />
+        <Route path="/gdpr" component={Gdpr} />
+        <Route path="/ingest" component={Ingest} />
+        <Route path="/search" component={SearchPage} />
+        <Route path="/data-analysis" component={DataAnalysis} />
         <Route component={NotFound} />
       </Switch>
-    </Suspense>
+      </AnimatedRoutes>
+    <ProductTour />
+    </>
   );
 }
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <ProtectedRoutes />
-        </WouterRouter>
-        <Toaster />
-      </TooltipProvider>
-    </QueryClientProvider>
+    <MotionConfig reducedMotion="user">
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <ProtectedRoutes />
+          </WouterRouter>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
+    </MotionConfig>
   );
 }
 

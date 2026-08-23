@@ -8,6 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
+import { TourSettings } from "@/components/tour-settings";
 import { Loader2, Check, X, ShieldAlert, MessageSquare, Star, BarChart3, DatabaseBackup } from "lucide-react";
 import { useEffect } from "react";
 
@@ -206,6 +207,7 @@ export default function Admin() {
             <TabsTrigger value="users">Users</TabsTrigger>
             <TabsTrigger value="feedback">Feedback</TabsTrigger>
             <TabsTrigger value="system">System</TabsTrigger>
+            <TabsTrigger value="tour">Tour</TabsTrigger>
           </TabsList>
 
           <TabsContent value="signups">
@@ -470,6 +472,13 @@ export default function Admin() {
                 </p>
               </CardContent>
             </Card>
+          </TabsContent>
+          <TabsContent value="tour">
+            <TourSettings />
+           </TabsContent>
+
+          <TabsContent value="tour">
+            <TourSettings />
           </TabsContent>
         </Tabs>
       </div>

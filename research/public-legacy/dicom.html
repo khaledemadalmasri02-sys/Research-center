@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Radiology DICOM — Research Platform</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #0f172a; color: #e2e8f0; }
+      header { padding: 16px 24px; background: #1e293b; }
+      main { padding: 24px; max-width: 900px; margin: 0 auto; }
+      h1 { font-size: 18px; margin: 0; }
+      .nav a { color: #93c5fd; margin-right: 16px; text-decoration: none; }
+      .card { background: #1e293b; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
+      label { display: block; margin: 8px 0 4px; font-size: 13px; color: #94a3b8; }
+      input, select, textarea, button { width: 100%; padding: 8px; border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; }
+      button { background: #2563eb; border: 0; cursor: pointer; margin-top: 8px; font-weight: 600; }
+      pre { background: #0f172a; padding: 12px; border-radius: 6px; overflow: auto; font-size: 12px; }
+      .studies div { padding: 8px; border-bottom: 1px solid #334155; }
+      .badge { background: #16a34a; color: #fff; padding: 2px 6px; border-radius: 4px; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Radiology DICOM</h1>
+      <div class="nav">
+        <a href="/consent.html">Consent</a>
+        <a href="/deidentify.html">De-identify</a>
+        <a href="/dicom.html">DICOM</a>
+      </div>
+    </header>
+    <main>
+      <div class="card">
+        <h2>Register parsed DICOM metadata</h2>
+        <label>Patient ID</label><input id="patientId" type="number" />
+        <label>Object key (R2 path)</label><input id="objectKey" />
+        <label>Modality</label>
+        <select id="modality">
+          <option></option><option>CT</option><option>MR</option><option>CR</option>
+          <option>DX</option><option>US</option><option>PT</option><option>OT</option>
+        </select>
+        <label>Study Instance UID</label><input id="studyUid" />
+        <label>Series Instance UID</label><input id="seriesUid" />
+        <label>SOP Instance UID</label><input id="sopUid" />
+        <label>Acquisition date</label><input id="acqDate" type="date" />
+        <label>Metadata JSON (PHI tags will be stripped on de-identify)</label>
+        <textarea id="metadata" rows="4">{"PatientName":"Doe^John","Modality":"CT","StudyInstanceUID":"1.2.3"}</textarea>
+        <button id="saveMeta">Save metadata</button>
+      </div>
+
+      <div class="card">
+        <h2>Studies for a patient</h2>
+        <label>Patient ID</label><input id="studyPatientId" type="number" />
+        <button id="loadStudies">Load studies</button>
+        <div class="studies" id="studiesOut"></div>
+      </div>
+
+      <div class="card">
+        <h2>De-identify image metadata</h2>
+        <label>DICOM image ID</label><input id="deidId" type="number" />
+        <button id="deidBtn">Strip PHI tags</button>
+        <pre id="deidOut"></pre>
+      </div>
+    </main>
+    <script src="/assets/dicom-page.js"></script>
+  </body>
+</html>

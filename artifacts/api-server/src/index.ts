@@ -147,6 +147,28 @@ async function ensureAuthTables() {
     );
     CREATE INDEX IF NOT EXISTS "IDX_notifications_user" ON "notifications" ("user_id");
     CREATE INDEX IF NOT EXISTS "IDX_notifications_unread" ON "notifications" ("user_id", "read");
+
+    -- Enforce username uniqueness even on databases created before the UNIQUE
+    -- constraint existed. CREATE TABLE IF NOT EXISTS never adds a missing
+    -- constraint to an existing table, so duplicates can persist. De-duplicate
+    -- (keep the earliest account per username) then add the constraint, ignoring
+    -- the error when it is already present.
+    DO $$
+    BEGIN
+      UPDATE "users" SET "username" = "username" || '__dedup' || "id"::text
+      WHERE "id" NOT IN (SELECT MIN("id") FROM "users" GROUP BY "username");
+      BEGIN
+        EXECUTE 'ALTER TABLE "users" ADD CONSTRAINT "users_username_unique" UNIQUE ("username")';
+      EXCEPTION WHEN duplicate_table THEN NULL;
+      END;
+
+      UPDATE "signup_requests" SET "username" = "username" || '__dedup' || "id"::text
+      WHERE "id" NOT IN (SELECT MIN("id") FROM "signup_requests" GROUP BY "username");
+      BEGIN
+        EXECUTE 'ALTER TABLE "signup_requests" ADD CONSTRAINT "signup_requests_username_unique" UNIQUE ("username")';
+      EXCEPTION WHEN duplicate_table THEN NULL;
+      END;
+    END $$;
   `);
 }
 
@@ -296,7 +318,10 @@ async function seedInitialAdmin() {
   await pool.query(
     `INSERT INTO "users" ("username", "password_hash", "role", "can_admin_access", "status")
      VALUES ($1, $2, 'admin', true, 'active')
-     ON CONFLICT ("username") DO NOTHING`,
+     ON CONFLICT ("username") DO UPDATE
+       SET "password_hash" = EXCLUDED."password_hash",
+           "status" = 'active',
+           "can_admin_access" = true`,
     [username, passwordHash],
   );
 }
@@ -311,6 +336,18 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+async function ensureTourConfig() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "tour_config" (
+      "id" integer PRIMARY KEY,
+      "config" jsonb NOT NULL DEFAULT '{}'::jsonb
+    );
+    INSERT INTO "tour_config" ("id", "config")
+      VALUES (1, '{"defaultSource":"animated","steps":{}}'::jsonb)
+      ON CONFLICT ("id") DO NOTHING;
+  `);
 }
 
 async function ensureBucket() {
@@ -353,6 +390,7 @@ ensureSessionTable()
   })
   .then(() => seedInitialAdmin().catch((err) => logger.warn({ err }, "initial admin seed failed")))
   .then(() => radiologyImageService.ensureTable().catch((err) => logger.warn({ err }, "radiology_images table ensure failed")))
+  .then(() => ensureTourConfig().catch((err) => logger.warn({ err }, "tour_config table ensure failed")))
   .then(() => ensureBucket())
   .then(() => {
     app.listen(port, (err) => {

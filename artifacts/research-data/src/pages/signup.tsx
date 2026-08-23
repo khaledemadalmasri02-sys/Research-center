@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "wouter";
 import { Loader2, CheckCircle2, UserPlus } from "lucide-react";
+import { FadeIn } from "@/lib/motion";
 
 export default function Signup() {
   const { signup, isSigningUp, signupError } = useAuth();
@@ -31,6 +32,7 @@ export default function Signup() {
   if (submitted) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-slate-100 p-4">
+        <FadeIn>
         <Card className="w-full max-w-md">
           <CardContent className="pt-6 text-center space-y-4">
             <CheckCircle2 className="h-12 w-12 text-emerald-600 mx-auto" />
@@ -44,6 +46,7 @@ export default function Signup() {
             </Button>
           </CardContent>
         </Card>
+        </FadeIn>
       </div>
     );
   }
@@ -51,9 +54,9 @@ export default function Signup() {
   const error = localError ?? signupError;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-teal-50 to-slate-100 p-4">
+    <div className="min-h-screen flex items-center justify-center auth-gradient p-4">
       <div className="w-full max-w-sm">
-        <div className="bg-white rounded-2xl shadow-lg border p-8 space-y-6">
+        <FadeIn className="bg-white dark:bg-card text-card-foreground rounded-2xl shadow-lg border p-8 space-y-6">
           <div className="text-center space-y-2">
             <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-teal-100 mb-2">
               <UserPlus className="w-6 h-6 text-teal-700" />
@@ -140,7 +143,7 @@ export default function Signup() {
               Sign in
             </Link>
           </p>
-        </div>
+        </FadeIn>
       </div>
     </div>
   );

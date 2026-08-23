@@ -10,7 +10,7 @@ const ALLOWED_TYPES = new Set(["general", "bug", "feature", "complaint", "praise
 const MAX_MESSAGE = 5000;
 
 // Submit feedback (any authenticated user)
-router.post("/", async (req: Request, res: Response) => {
+router.post("/feedback", async (req: Request, res: Response) => {
   const { type, message, rating } = req.body as {
     type?: string;
     message?: string;
@@ -60,7 +60,7 @@ router.post("/", async (req: Request, res: Response) => {
 });
 
 // List feedback (admin only)
-router.get("/", async (req: Request, res: Response) => {
+router.get("/feedback", async (req: Request, res: Response) => {
   if (!req.session.canAdminAccess) {
     res.status(403).json({ error: "Admin access required." });
     return;
@@ -85,7 +85,7 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 // Mark feedback as reviewed (admin only)
-router.patch("/:id/review", async (req: Request, res: Response) => {
+router.patch("/feedback/:id/review", async (req: Request, res: Response) => {
   if (!req.session.canAdminAccess) {
     res.status(403).json({ error: "Admin access required." });
     return;

@@ -1,0 +1,17 @@
+{
+  "name": "MedResearch Data Platform",
+  "short_name": "MedResearch",
+  "description": "Secure clinical research data collection and patient records platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0f172a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Consent &amp; IRB — MedResearch</title>
+    <link rel="stylesheet" href="/assets/index.css" />
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #1a1a1a; }
+      header { background: #0b3d91; color: #fff; padding: 12px 20px; font-weight: 600; }
+      main { max-width: 920px; margin: 20px auto; padding: 0 16px; }
+      .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+      label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+      input, select, textarea { width: 100%; padding: 8px; border: 1px solid #ccd2da; border-radius: 6px; box-sizing: border-box; }
+      button { background: #0b3d91; color: #fff; border: 0; padding: 9px 14px; border-radius: 6px; cursor: pointer; margin-top: 10px; }
+      button.secondary { background: #6b7280; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 8px; border-bottom: 1px solid #eee; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+      .badge.signed { background: #e6f4ea; color: #137333; }
+      .badge.withdrawn { background: #fce8e8; color: #c5221f; }
+      .muted { color: #6b7280; font-size: 12px; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .row > div { flex: 1; min-width: 200px; }
+    </style>
+  </head>
+  <body>
+    <header>MedResearch — Consent &amp; IRB Management</header>
+    <main>
+      <div id="authStatus" class="muted">Checking session…</div>
+
+      <section class="card">
+        <h3>Study Protocols</h3>
+        <div id="protocols">Loading…</div>
+        <div class="row" style="margin-top:12px">
+          <div><label>Protocol code</label><input id="pCode" placeholder="STUDY-001" /></div>
+          <div><label>Title</label><input id="pTitle" placeholder="Title" /></div>
+        </div>
+        <div class="row">
+          <div><label>IRB number</label><input id="pIrb" placeholder="IRB-2026-001" /></div>
+          <div><label>PI name</label><input id="pPi" placeholder="Dr. …" /></div>
+        </div>
+        <button id="addProtocol">Add protocol (admin)</button>
+      </section>
+
+      <section class="card">
+        <h3>Consent Templates</h3>
+        <div id="versions">Loading…</div>
+        <div class="row" style="margin-top:12px">
+          <div><label>Code</label><input id="vCode" placeholder="V1" /></div>
+          <div><label>Label</label><input id="vLabel" placeholder="Standard Research Consent" /></div>
+        </div>
+        <div class="row">
+          <div><label>IRB number</label><input id="vIrb" placeholder="IRB-2026-001" /></div>
+          <div><label>Text</label><input id="vText" placeholder="Consent text…" /></div>
+        </div>
+        <button id="addVersion">Add template (admin)</button>
+      </section>
+
+      <section class="card">
+        <h3>Record / Review Consent</h3>
+        <div class="row">
+          <div><label>Patient ID (patients.id)</label><input id="patientId" type="number" placeholder="1" /></div>
+          <div><label>Template</label><select id="versionSelect"></select></div>
+        </div>
+        <div><label>Signed document object key (optional)</label><input id="docKey" placeholder="consent/...pdf" /></div>
+        <button id="signBtn">Sign consent</button>
+        <button id="statusBtn" class="secondary">Check status</button>
+        <div id="statusResult" class="muted"></div>
+        <h4 style="margin-top:16px">Consents for this patient</h4>
+        <div id="consentList">—</div>
+      </section>
+    </main>
+    <script src="/assets/consent-page.js"></script>
+  </body>
+</html>

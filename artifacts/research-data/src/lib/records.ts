@@ -162,6 +162,57 @@ export const recordsApi = {
   },
 };
 
+export interface CollectionOverview {
+  id: number;
+  name: string;
+  isActive: boolean;
+  isDefault: boolean;
+  shared: boolean;
+  deactivated: boolean;
+  recordCount: number;
+  recentCount: number;
+  updatedAt: string;
+}
+
+export interface FieldStatValue {
+  value: string;
+  count: number;
+}
+
+export interface FieldStat {
+  key: string;
+  label: string;
+  type: FieldDef["type"];
+  values?: FieldStatValue[];
+  numeric?: { count: number; min: number; max: number; avg: number };
+}
+
+export interface CollectionsStats {
+  overview: CollectionOverview[];
+  summary: { total: number; recentCount: number; collectionCount: number; selectedIds: number[] };
+  perCollection: { id: number; name: string; total: number; recentCount: number }[];
+  fieldStats: FieldStat[];
+}
+
+export const collectionsApi = {
+  getStats: (definitionIds?: number[]) => {
+    const qs =
+      definitionIds && definitionIds.length > 0
+        ? `?definitionIds=${definitionIds.join(",")}`
+        : "";
+    return fetch(`/api/collections/stats${qs}`, { credentials: "include" }).then((r) =>
+      json<CollectionsStats>(r),
+    );
+  },
+};
+
+export function useCollectionsStats(definitionIds?: number[]) {
+  return useQuery({
+    queryKey: ["collections-stats", definitionIds ?? []],
+    queryFn: () => collectionsApi.getStats(definitionIds),
+  });
+}
+
 export function usePatientsDefinition() {
   return useQuery({
     queryKey: ["patients-definition"],

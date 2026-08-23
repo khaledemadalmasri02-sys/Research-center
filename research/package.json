@@ -16,16 +16,24 @@
     "d1:migrate": "wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql",
     "d1:migrate:local": "wrangler d1 execute mednexus-research --local --file=./schema.sql",
     "secrets": "bash scripts/put-secrets.sh",
+    "test": "vitest run",
+    "check:schema": "node scripts/check-schema.mjs",
+    "ui:install": "npm --prefix ui install",
+    "ui:dev": "npm --prefix ui run dev",
+    "ui:build": "npm --prefix ui run build",
+    "ui:preview": "npm --prefix ui run preview",
+    "ui:typecheck": "npm --prefix ui run typecheck",
     "tunnel": "bash scripts/setup-tunnel.sh",
     "tunnel:run": "bash scripts/run-tunnel.sh",
     "tunnel:info": "cloudflared tunnel info research-tunnel"
   },
   "dependencies": {
-    "hono": "^4.0.0",
-    "bcryptjs": "^3.0.3"
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.0.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260815.1",
+    "vitest": "^2.1.9",
     "wrangler": "^4.123.0"
   }
 }

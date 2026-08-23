@@ -12,7 +12,9 @@ account_id = "1c6980a08850bab43d5a92964a29a37f"
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+# Run the Worker first for every request so we can inject a per-host canonical
+# <link> into HTML documents (both research-center.fit and www. serve content).
+run_worker_first = ["/*"]
 
 [[kv_namespaces]]
 binding = "SESSIONS"
@@ -31,13 +33,13 @@ database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
 [env.production]
 name = "research"
 logpush = true
-route = "research-center.fit/*"
+routes = ["research-center.fit/*", "www.research-center.fit/*"]
 
 [env.production.assets]
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/api/*"]
+run_worker_first = ["/*"]
 
 [[env.production.kv_namespaces]]
 binding = "SESSIONS"
@@ -56,4 +58,7 @@ database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
 # The Worker is now a pure static + /api reverse-proxy to the Postgres
 # api-server, so it no longer needs S3 / session / GROQ secrets itself —
 # those live on the api-server (MinIO + Postgres are local to it).
+
+# Custom domain: Cloudflare auto-provisions the `www` DNS record + TLS cert.
+# (Not supported by wrangler 4.123 config; the `www` route below is used instead.)
 

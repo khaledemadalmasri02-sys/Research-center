@@ -7,15 +7,29 @@ interface AuthMe {
   canAdminAccess: boolean;
 }
 
+// Fetch with a hard timeout so an unreachable backend (e.g. the Worker → tunnel
+// → api-server chain is down) aborts instead of hanging the whole app on the
+// auth gate. Without this, a pending /api/auth/me leaves `isLoading` true
+// forever and the app shows an endless spinner.
+async function fetchWithTimeout(url: string, init: RequestInit, ms = 10000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 async function fetchMe(): Promise<AuthMe> {
-  const res = await fetch("/api/auth/me", { credentials: "include" });
+  const res = await fetchWithTimeout("/api/auth/me", { credentials: "include" });
   if (res.status === 401) return { authenticated: false, username: null, role: null, canAdminAccess: false };
   if (!res.ok) throw new Error("Failed to check auth");
   return res.json() as Promise<AuthMe>;
 }
 
 async function postLogin(username: string, password: string) {
-  const res = await fetch("/api/auth/login", {
+  const res = await fetchWithTimeout("/api/auth/login", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -29,7 +43,7 @@ async function postLogin(username: string, password: string) {
 }
 
 async function postLogout() {
-  await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+  await fetchWithTimeout("/api/auth/logout", { method: "POST", credentials: "include" });
 }
 
 async function postSignup(payload: {
@@ -39,7 +53,7 @@ async function postSignup(payload: {
   email?: string;
   reason?: string;
 }) {
-  const res = await fetch("/api/auth/signup", {
+  const res = await fetchWithTimeout("/api/auth/signup", {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },

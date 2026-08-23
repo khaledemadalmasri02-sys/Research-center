@@ -350,200 +350,423 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
 
-/storage/images/by-patient:
-  post:
-    tags: [Storage]
-    operationId: importImageByPatient
-    summary: Import an image from a URL and associate with a patient
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ImportImageByPatientRequest'
-    responses:
-      '200':
-        description: Image imported successfully.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ImportImageByPatientResponse'
-      '400':
-        description: Invalid request or URL does not point to an image.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-      '500':
-        description: Server error.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-
-/storage/images/by-patient/{patientId}:
-  get:
-    tags: [Storage]
-    operationId: getPatientImages
-    summary: List all images associated with a patient ID
-    parameters:
-      - name: patientId
-        in: path
+  /storage/images/by-patient:
+    post:
+      tags: [Storage]
+      operationId: importImageByPatient
+      summary: Import an image from a URL and associate with a patient
+      requestBody:
         required: true
-        schema:
-          type: string
-    responses:
-      '200':
-        description: Images found.
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PatientImagesResponse'
-'500':
-        description: Server error.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-
-/storage/images/search:
-  post:
-    tags: [Storage]
-    operationId: searchImages
-    summary: Search for images by identifier or filename
-    requestBody:
-      required: true
-      content:
-        application/json:
+              $ref: '#/components/schemas/ImportImageByPatientRequest'
+      responses:
+        '200':
+          description: Image imported successfully.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportImageByPatientResponse'
+        '400':
+          description: Invalid request or URL does not point to an image.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  
+  /storage/images/by-patient/{patientId}:
+    get:
+      tags: [Storage]
+      operationId: getPatientImages
+      summary: List all images associated with a patient ID
+      parameters:
+        - name: patientId
+          in: path
+          required: true
           schema:
-            type: object
-            properties:
-              identifier:
-                type: string
-                description: Image identifier to search (e.g., patient ID, study ID)
-              patientId:
-                type: string
-                description: Existing patient ID to attach images to
-              filename:
-                type: string
-                description: Filename pattern to search for
-            additionalProperties: false
-    responses:
-      '200':
-        description: Images found.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SearchImagesResponse'
-      '404':
-        description: No images found.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-      '400':
-        description: Invalid request.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-
-/patients/{id}/images:
-  post:
-    tags: [patients]
-    operationId: attachPatientImageById
-    summary: Attach existing images to a patient by image ID
-    parameters:
-      - name: id
-        in: path
+            type: string
+      responses:
+        '200':
+          description: Images found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PatientImagesResponse'
+        '500':
+          description: Server error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  
+  /storage/images/search:
+    post:
+      tags: [Storage]
+      operationId: searchImages
+      summary: Search for images by identifier or filename
+      requestBody:
         required: true
-        schema:
-          type: integer
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [imageId]
-            properties:
-              imageId:
-                type: string
-                description: The ID to search for images (e.g., patient ID, study ID)
-    responses:
-      '200':
-        description: Image attached to patient.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Patient'
-      '404':
-        description: Patient or image not found.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-      '400':
-        description: Invalid request.
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-
-/patients/batch-import-images:
-  post:
-    tags: [patients]
-    operationId: batchImportImages
-    summary: Batch upload images from URLs and attach to a patient record
-    requestBody:
-      required: true
-      content:
-        application/json:
-          schema:
-            type: object
-            required: [patientId, imageUrls]
-            properties:
-              patientId:
-                type: string
-                description: Patient ID to attach images to
-              imageUrls:
-                type: array
-                items:
-                  type: string
-                  format: uri
-                description: List of image URLs to download and upload
-    responses:
-      '200':
-        description: Images imported successfully.
         content:
           application/json:
             schema:
               type: object
               properties:
-                uploaded:
-                  type: integer
-                  description: Number of images successfully uploaded
-                failed:
-                  type: integer
-                  description: Number of failed uploads
-                failedUrls:
+                identifier:
+                  type: string
+                  description: Image identifier to search (e.g., patient ID, study ID)
+                patientId:
+                  type: string
+                  description: Existing patient ID to attach images to
+                filename:
+                  type: string
+                  description: Filename pattern to search for
+              additionalProperties: false
+      responses:
+        '200':
+          description: Images found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchImagesResponse'
+        '404':
+          description: No images found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  
+  /patients/{id}/images:
+    post:
+      tags: [patients]
+      operationId: attachPatientImageById
+      summary: Attach existing images to a patient by image ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [imageId]
+              properties:
+                imageId:
+                  type: string
+                  description: The ID to search for images (e.g., patient ID, study ID)
+      responses:
+        '200':
+          description: Image attached to patient.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Patient'
+        '404':
+          description: Patient or image not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  
+  /patients/batch-import-images:
+    post:
+      tags: [patients]
+      operationId: batchImportImages
+      summary: Batch upload images from URLs and attach to a patient record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [patientId, imageUrls]
+              properties:
+                patientId:
+                  type: string
+                  description: Patient ID to attach images to
+                imageUrls:
                   type: array
                   items:
                     type: string
-                patient:
-                  $ref: '#/components/schemas/Patient'
-      '404':
-        description: Patient not found.
+                    format: uri
+                  description: List of image URLs to download and upload
+      responses:
+        '200':
+          description: Images imported successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  uploaded:
+                    type: integer
+                    description: Number of images successfully uploaded
+                  failed:
+                    type: integer
+                    description: Number of failed uploads
+                  failedUrls:
+                    type: array
+                    items:
+                      type: string
+                  patient:
+                    $ref: '#/components/schemas/Patient'
+        '404':
+          description: Patient not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '400':
+          description: Invalid request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  
+  /analysis/datasets:
+    get:
+      operationId: listAnalysisDatasets
+      tags: [analysis]
+      summary: List my analysis datasets
+      responses:
+        "200":
+          description: Datasets
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AnalysisDatasetSummary"
+    post:
+      operationId: importAnalysisDataset
+      tags: [analysis]
+      summary: Upload a dataset (CSV/XLSX/SAV)
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                name:
+                  type: ["string", "null"]
+                format:
+                  type: ["string", "null"]
+              required:
+                - file
+      responses:
+        "201":
+          description: Created dataset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisDatasetImported"
+
+  /analysis/datasets/from-query:
+    post:
+      operationId: buildAnalysisDatasetFromQuery
+      tags: [analysis]
+      summary: Build a dataset from existing patient records
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
-      '400':
-        description: Invalid request.
+              $ref: "#/components/schemas/FromQueryBody"
+      responses:
+        "201":
+          description: Created dataset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisDatasetImported"
+
+  /analysis/datasets/{id}:
+    get:
+      operationId: getAnalysisDataset
+      tags: [analysis]
+      summary: Get dataset meta, variables, and preview rows
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Dataset detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisDatasetDetail"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analysis/datasets/{id}/variables:
+    patch:
+      operationId: updateAnalysisVariables
+      tags: [analysis]
+      summary: Update variable metadata (measure, labels, missing)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ErrorEnvelope'
+              type: array
+              items:
+                $ref: "#/components/schemas/VariableUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+
+  /analysis/datasets/{id}/analyze:
+    post:
+      operationId: analyzeDataset
+      tags: [analysis]
+      summary: Run a statistical analysis
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalyzeBody"
+      responses:
+        "201":
+          description: Analysis result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisResult"
+        "400":
+          description: Invalid analysis request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analysis/runs/{id}:
+    get:
+      operationId: getAnalysisRun
+      tags: [analysis]
+      summary: Get a saved analysis run
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisRun"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /analysis/datasets/{id}/export:
+    post:
+      operationId: exportAnalysisDataset
+      tags: [analysis]
+      summary: Export dataset to SAV/CSV/XLSX
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportBody"
+      responses:
+        "200":
+          description: File download
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  /analysis/runs/{id}/export:
+    post:
+      operationId: exportAnalysisRun
+      tags: [analysis]
+      summary: Export an analysis result to CSV
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExportBody"
+      responses:
+        "200":
+          description: CSV download
+          content:
+            text/csv:
+              schema:
+                type: string
 
 components:
   schemas:
@@ -674,7 +897,7 @@ components:
           type: ["string", "null"]
         finalConfirmedDiagnosisAr:
           type: ["string", "null"]
-finalConfirmedDiagnosis:
+        finalConfirmedDiagnosis:
           type: ["string", "null"]
         imageId:
           type: ["string", "null"]
@@ -912,3 +1135,252 @@ finalConfirmedDiagnosis:
             type: string
         attachmentPatientId:
           type: string
+
+    AnalysisVariable:
+      type: object
+      properties:
+        name:
+          type: string
+        label:
+          type: ["string", "null"]
+        dataType:
+          type: string
+        measure:
+          type: string
+        missingValues:
+          type: ["array", "null"]
+          items:
+            type: ["string", "number"]
+        valueLabels:
+          type: ["object", "null"]
+          additionalProperties:
+            type: string
+      required:
+        - name
+        - dataType
+        - measure
+
+    AnalysisDatasetSummary:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        source:
+          type: string
+        format:
+          type: string
+        rowCount:
+          type: integer
+        createdAt:
+          type: string
+      required:
+        - id
+        - name
+        - source
+        - format
+        - rowCount
+
+    AnalysisDatasetImported:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        format:
+          type: string
+        rowCount:
+          type: integer
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalysisVariable"
+      required:
+        - id
+        - name
+        - format
+        - rowCount
+        - variables
+
+    AnalysisDatasetDetail:
+      type: object
+      properties:
+        dataset:
+          $ref: "#/components/schemas/AnalysisDatasetSummary"
+        variables:
+          type: array
+          items:
+            $ref: "#/components/schemas/AnalysisVariable"
+        preview:
+          type: array
+          items:
+            type: array
+            items:
+              type: ["string", "number", "null"]
+      required:
+        - dataset
+        - variables
+        - preview
+
+    FromQueryBody:
+      type: object
+      properties:
+        name:
+          type: ["string", "null"]
+        columns:
+          type: ["array", "null"]
+          items:
+            type: string
+        sex:
+          type: ["string", "null"]
+        collectionType:
+          type: ["string", "null"]
+        search:
+          type: ["string", "null"]
+
+    VariableUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        label:
+          type: ["string", "null"]
+        measure:
+          type: ["string", "null"]
+        missingValues:
+          type: ["array", "null"]
+          items:
+            type: ["string", "number"]
+        valueLabels:
+          type: ["object", "null"]
+          additionalProperties:
+            type: string
+      required:
+        - name
+
+    AnalysisOptions:
+      type: object
+      description: Analysis-specific options; shape depends on the analysis type.
+      properties:
+        mode:
+          type: string
+        variable:
+          type: string
+        variableA:
+          type: string
+        variableB:
+          type: string
+        dependent:
+          type: string
+        groupVariable:
+          type: string
+        groupA:
+          type: ["string", "number", "null"]
+        groupB:
+          type: ["string", "number", "null"]
+        pairedA:
+          type: string
+        pairedB:
+          type: string
+        equalVariance:
+          type: ["boolean", "null"]
+        row:
+          type: string
+        column:
+          type: string
+        method:
+          type: string
+        variables:
+          type: ["array", "null"]
+          items:
+            type: string
+        independent:
+          type: ["array", "null"]
+          items:
+            type: string
+        intercept:
+          type: ["boolean", "null"]
+        alpha:
+          type: ["number", "null"]
+      additionalProperties: true
+
+    AnalyzeBody:
+      type: object
+      required: [type, options]
+      properties:
+        type:
+          type: string
+          enum: [descriptive, ttest, anova, chisquare, correlation, regression]
+        options:
+          $ref: "#/components/schemas/AnalysisOptions"
+
+    ResultTable:
+      type: object
+      properties:
+        title:
+          type: ["string", "null"]
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+            items:
+              type: ["string", "number", "null"]
+      required:
+        - columns
+        - rows
+
+    AnalysisResult:
+      type: object
+      properties:
+        type:
+          type: string
+        summary:
+          type: ["string", "null"]
+        tables:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResultTable"
+        stats:
+          type: object
+          additionalProperties: true
+      required:
+        - type
+        - tables
+        - stats
+
+    AnalysisRun:
+      type: object
+      properties:
+        id:
+          type: integer
+        datasetId:
+          type: integer
+        ownerId:
+          type: integer
+        type:
+          type: string
+        config:
+          type: object
+          additionalProperties: true
+        result:
+          $ref: "#/components/schemas/AnalysisResult"
+        createdAt:
+          type: string
+      required:
+        - id
+        - datasetId
+        - type
+        - config
+        - result
+
+    ExportBody:
+      type: object
+      properties:
+        format:
+          type: ["string", "null"]

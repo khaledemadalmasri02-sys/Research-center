@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>De-identification — MedResearch</title>
+    <link rel="stylesheet" href="/assets/index.css" />
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; background: #f6f7f9; color: #1a1a1a; }
+      header { background: #0b3d91; color: #fff; padding: 12px 20px; font-weight: 600; }
+      main { max-width: 820px; margin: 20px auto; padding: 0 16px; }
+      .card { background: #fff; border: 1px solid #e3e6ea; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+      label { display: block; font-size: 13px; font-weight: 600; margin: 10px 0 4px; }
+      input { width: 100%; padding: 8px; border: 1px solid #ccd2da; border-radius: 6px; box-sizing: border-box; }
+      button { background: #0b3d91; color: #fff; border: 0; padding: 9px 14px; border-radius: 6px; cursor: pointer; margin-top: 10px; }
+      .muted { color: #6b7280; font-size: 12px; }
+      code { background: #eef1f5; padding: 2px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <header>MedResearch — De-identification &amp; Pseudonymization</header>
+    <main>
+      <div id="authStatus" class="muted">Checking session…</div>
+      <section class="card">
+        <h3>Generate / Lookup Pseudonym</h3>
+        <label>Patient ID (patients.id)</label>
+        <input id="patientId" type="number" placeholder="1" />
+        <label>Study code</label>
+        <input id="studyCode" placeholder="STUDY1" />
+        <button id="genBtn">Get pseudonym</button>
+        <div id="pseudoResult" class="muted"></div>
+      </section>
+      <section class="card">
+        <h3>Export De-identified Dataset (CSV)</h3>
+        <p class="muted">
+          Drops direct identifiers (<code>patient_name</code>, <code>radiology_images</code>,
+          <code>notes</code>, image links) and substitutes a stable pseudonym for each patient.
+        </p>
+        <label>Study code</label>
+        <input id="expStudy" placeholder="STUDY1" />
+        <button id="exportBtn">Download CSV</button>
+      </section>
+      <p class="muted">
+        Note: in this worker build, patients live in the local D1 store. The exported
+        CSV reflects whatever patients are present in D1.
+      </p>
+    </main>
+    <script>
+      const api = async (method, path, body, raw) => {
+        const opts = { method, headers: {} };
+        if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+        const res = await fetch("/api/deidentify" + path, opts);
+        if (raw) return res;
+        let data = null; try { data = await res.json(); } catch {}
+        if (!res.ok) throw new Error(data?.error || "HTTP " + res.status);
+        return data;
+      };
+      const el = (id) => document.getElementById(id);
+
+      (async () => {
+        try { await api("GET", "/export?studyCode=x"); el("authStatus").textContent = "Authenticated."; }
+        catch { el("authStatus").textContent = "Not authenticated — log in first."; }
+      })();
+
+      el("genBtn").addEventListener("click", async () => {
+        const pid = el("patientId").value, sc = el("studyCode").value;
+        if (!pid || !sc) return alert("Both fields required.");
+        try {
+          const r = await api("POST", "/pseudonym", { patientId: Number(pid), studyCode: sc });
+          el("pseudoResult").textContent = "Pseudonym: " + r.pseudonym;
+        } catch (e) { el("pseudoResult").textContent = "Error: " + e.message; }
+      });
+
+      el("exportBtn").addEventListener("click", async () => {
+        const sc = el("expStudy").value || "DEFAULT";
+        try {
+          const res = await api("POST", "/export?studyCode=" + encodeURIComponent(sc), {}, true);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = "deidentified_" + sc + ".csv"; a.click();
+          URL.revokeObjectURL(url);
+        } catch (e) { alert("Failed: " + e.message); }
+      });
+    </script>
+  </body>
+</html>

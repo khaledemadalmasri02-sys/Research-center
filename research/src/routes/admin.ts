@@ -7,6 +7,7 @@ import {
   validUsername,
   strongPassword,
   parseJsonArray,
+  isUniqueViolation,
 } from "../lib/security";
 
 const START_TIME = Date.now();
@@ -73,20 +74,28 @@ export const adminHandlers = {
       .first();
     if (existing) return c.json({ error: "Username already exists." }, 409);
 
-    const result = await c.env.DB.prepare(
-      `INSERT INTO users (username, password_hash, full_name, email, role, can_admin_access, status, created_by)
-       VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`
-    )
-      .bind(
-        body.username,
-        hashPassword(body.password!),
-        body.fullName || null,
-        body.email || null,
-        role,
-        body.canAdminAccess ? 1 : 0,
-        auth?.user.id ?? null
+    let result: any;
+    try {
+      result = await c.env.DB.prepare(
+        `INSERT INTO users (username, password_hash, full_name, email, role, can_admin_access, status, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, 'active', ?)`
       )
-      .run();
+        .bind(
+          body.username,
+          hashPassword(body.password!),
+          body.fullName || null,
+          body.email || null,
+          role,
+          body.canAdminAccess ? 1 : 0,
+          auth?.user.id ?? null
+        )
+        .run();
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        return c.json({ error: "Username already exists." }, 409);
+      }
+      throw e;
+    }
 
     const id = (result as any).meta?.last_row_id;
     await writeAudit(c, {
@@ -208,12 +217,19 @@ export const adminHandlers = {
     if (!req) return c.json({ error: "Request not found." }, 404);
     if (req.status !== "pending") return c.json({ error: "Already reviewed." }, 409);
 
-    await c.env.DB.prepare(
-      `INSERT INTO users (username, password_hash, full_name, email, role, can_admin_access, status, created_by)
-       VALUES (?, ?, ?, ?, 'user', 0, 'active', ?)`
-    )
-      .bind(req.username, req.password_hash, req.full_name, req.email, auth?.user.id ?? null)
-      .run();
+    try {
+      await c.env.DB.prepare(
+        `INSERT INTO users (username, password_hash, full_name, email, role, can_admin_access, status, created_by)
+         VALUES (?, ?, ?, ?, 'user', 0, 'active', ?)`
+      )
+        .bind(req.username, req.password_hash, req.full_name, req.email, auth?.user.id ?? null)
+        .run();
+    } catch (e) {
+      if (isUniqueViolation(e)) {
+        return c.json({ error: "A user with this username already exists." }, 409);
+      }
+      throw e;
+    }
 
     await c.env.DB.prepare(
       `UPDATE signup_requests SET status = 'approved', reviewed_by = ?, reviewed_at = datetime('now') WHERE id = ?`

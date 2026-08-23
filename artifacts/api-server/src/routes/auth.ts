@@ -95,6 +95,10 @@ router.post("/auth/login", async (req: Request, res: Response) => {
   res.json({ ok: true, username: user.username, role: user.role, canAdminAccess: user.canAdminAccess });
 });
 
+function isUniqueViolation(e: unknown): boolean {
+  return (e as { code?: string })?.code === "23505";
+}
+
 // Sign-up application: creates a PENDING request reviewed by an admin.
 router.post("/auth/signup", async (req: Request, res: Response) => {
   const limit = rateLimit(`signup:${clientIp(req)}`, 10, LOGIN_RATE_WINDOW_MS);
@@ -127,7 +131,7 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
 
   const [existingUser] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.username, username)).limit(1);
   if (existingUser) {
-    res.status(409).json({ error: "Username already taken." });
+    res.status(409).json({ error: "An account or request with that username already exists." });
     return;
   }
   const [existingRequest] = await db
@@ -136,22 +140,26 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
     .where(eq(signupRequestsTable.username, username))
     .limit(1);
   if (existingRequest) {
-    if (existingRequest.status === "pending") {
-      res.status(409).json({ error: "A sign-up request for this username is already pending." });
-    } else {
-      res.status(409).json({ error: "Username already requested. Contact an administrator." });
-    }
+    res.status(409).json({ error: "An account or request with that username already exists." });
     return;
   }
 
   const passwordHash = await hashPassword(password);
-  await db.insert(signupRequestsTable).values({
-    username,
-    passwordHash,
-    fullName: fullName ?? null,
-    email: email ?? null,
-    reason: reason ?? null,
-  });
+  try {
+    await db.insert(signupRequestsTable).values({
+      username,
+      passwordHash,
+      fullName: fullName ?? null,
+      email: email ?? null,
+      reason: reason ?? null,
+    });
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      res.status(409).json({ error: "An account or request with that username already exists." });
+      return;
+    }
+    throw e;
+  }
 
   await writeAudit({ action: "auth.signup.request", detail: { username }, ip: clientIp(req) });
 
@@ -167,13 +175,22 @@ router.post("/auth/logout", (req: Request, res: Response) => {
   });
 });
 
-router.get("/auth/me", (req: Request, res: Response) => {
+router.get("/auth/me", async (req: Request, res: Response) => {
   if (req.session.authenticated && req.session.username) {
+    const [u] = await db
+      .select()
+      .from(usersTable)
+      .where(eq(usersTable.id, req.session.userId ?? 0))
+      .limit(1);
     res.json({
       authenticated: true,
+      id: req.session.userId ?? u?.id ?? null,
       username: req.session.username,
+      fullName: u?.fullName ?? null,
+      email: u?.email ?? null,
       role: req.session.role ?? "user",
       canAdminAccess: req.session.canAdminAccess ?? false,
+      status: u?.status ?? "active",
     });
   } else {
     res.status(401).json({ authenticated: false });

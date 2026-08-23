@@ -8,7 +8,7 @@
     "typecheck:libs": "tsc --build",
     "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --filter \"./research/**\" --if-present run typecheck",
     "dev": "bash scripts/dev.sh",
-    "dev:apps": "PORT=3000 npx tsx artifacts/api-server/src/index.ts & PORT=3003 npx vite dev artifacts/mockup-sandbox --host 0.0.0.0 & PORT=3004 npx vite dev artifacts/research-data --host 0.0.0.0 & wait",
+    "dev:apps": "PORT=3000 npx tsx artifacts/api-server/src/index.ts & PORT=3003 npx vite dev artifacts/mockup-sandbox --host 0.0.0.0 & API_PROXY_TARGET=http://localhost:3000 PORT=3004 npx vite dev artifacts/research-data --host 0.0.0.0 & wait",
     "dev:s3": "bash scripts/docker-up.sh",
     "docker-up": "docker compose up -d",
     "docker-down": "docker compose down",
