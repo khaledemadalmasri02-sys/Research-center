@@ -31,6 +31,8 @@ echo "  - Frontend (port 3004): proxies API calls to localhost:3000"
 
 # Start api-server first (provides proper signed URLs)
 PORT=3000 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mednexus" SESSION_SECRET="dev-secret" \
+  NODE_ENV="development" \
+  ALLOWED_ORIGINS="http://localhost:3003,http://localhost:3004,http://127.0.0.1:3003,http://127.0.0.1:3004" \
   APP_USERNAME="admin" APP_PASSWORD_HASH='$2b$10$your-bcrypt-hash-here' \
   S3_ENDPOINT="http://localhost:9000" S3_ACCESS_KEY_ID="minioadmin" S3_SECRET_ACCESS_KEY="minioadmin" \
   S3_BUCKET="mednexus" S3_FORCE_PATH_STYLE="true" \

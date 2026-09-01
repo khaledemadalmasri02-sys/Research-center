@@ -99,6 +99,7 @@ export S3_SIGNED_URL_EXPIRES_SECONDS="300"
 export PUBLIC_OBJECT_SEARCH_PATHS="/mednexus"
 export PRIVATE_OBJECT_DIR="/mednexus"
 export NODE_ENV="development"
+export ALLOWED_ORIGINS="http://localhost:3003,http://localhost:3004,http://127.0.0.1:3003,http://127.0.0.1:3004"
 setsid nohup pnpm exec tsx artifacts/api-server/src/index.ts > "$KILO/api-server.log" 2>&1 &
 echo $! > "$KILO/api-server.pid"
 for i in $(seq 1 60); do

@@ -17,22 +17,52 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 // ---- Allowed origins (CORS + CSRF) -----------------------------------------
-// Strict mode is opt-in via ALLOWED_ORIGINS (comma-separated) or SECURE_CORS=true.
-// Cloud-IDE previews set NODE_ENV=production but serve the SPA from a dynamic
-// URL, so we do NOT key strictness on NODE_ENV alone — that would break the
-// dev workflow. Without explicit configuration we reflect any origin (the
-// original, working behavior), still protected by auth + the write-time Origin
-// guard below when strict mode is enabled.
-const strictCors = process.env.SECURE_CORS === "true" || !!process.env.ALLOWED_ORIGINS;
-const allowedOrigins = (
-  process.env.ALLOWED_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean) ??
-  [
-    "http://localhost:3003",
-    "http://localhost:3004",
-    "http://127.0.0.1:3003",
-    "https://research-center.fit",
-  ]
-);
+// CORS policy is enforced at the api-server, but most production traffic flows
+// through the Cloudflare Worker which rewrites the upstream `Origin` header to
+// the api-server's own base URL before forwarding (see
+// research/src/index.ts:proxyToBackend). That means the api-server's CORS
+// check fires only for direct browser→api-server traffic (local dev, health
+// checks from non-browser clients). It is still meaningful to lock down by
+// default — a misconfigured local proxy or a malicious origin that has
+// resolved the api-server's origin must not be able to issue credentialed
+// cross-site requests.
+//
+// Modes (resolved in priority order):
+//   1. ALLOWED_ORIGINS — comma-separated allowlist. Enables strict mode.
+//   2. SECURE_CORS=allow-any — explicit escape hatch for cloud-IDE dev URLs
+//      that change every preview. Do not use in production.
+//   3. NODE_ENV=production — refuse to start unless (1) or (2) is set. Fails
+//      closed. Production must be explicit.
+//   4. NODE_ENV=development — permissive dev allowlist covering the SPA on
+//      3003/3004 and 127.0.0.1. Strict mode is still ON so the Origin-guard
+//      below rejects writes from anything else.
+const env = process.env.NODE_ENV;
+const rawAllowed = process.env.ALLOWED_ORIGINS?.split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const secureCors = process.env.SECURE_CORS;
+
+if (env === "production" && !rawAllowed?.length && secureCors !== "allow-any") {
+  throw new Error(
+    "Refusing to start: production requires ALLOWED_ORIGINS or SECURE_CORS=allow-any. " +
+      "Set ALLOWED_ORIGINS to a comma-separated list of allowed origins.",
+  );
+}
+
+const allowAny = secureCors === "allow-any";
+const strictCors = allowAny || !!rawAllowed?.length;
+const allowedOrigins =
+  rawAllowed ??
+  (allowAny
+    ? null
+    : [
+        "http://localhost:3000",
+        "http://localhost:3003",
+        "http://localhost:3004",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3003",
+        "http://127.0.0.1:3004",
+      ]);
 
 // ---- Security headers (helmet-free, dependency-light) ----------------------
 app.use((_req, res, next) => {
@@ -52,34 +82,34 @@ app.use((_req, res, next) => {
 });
 
 // ---- CORS ----------------------------------------------------------------
-// Strict mode (set ALLOWED_ORIGINS / SECURE_CORS=true): only reflect explicitly
-// allowed origins. Otherwise reflect any origin so the SPA can be served from
-// any host/port (local dev, cloud-IDE preview) without breaking the cookie.
+// Strict mode is now ON by default — see the policy block above. The escape
+// hatch is `SECURE_CORS=allow-any` (or `ALLOWED_ORIGINS=*` is rejected because
+// it would defeat the purpose; use the explicit env name).
 app.use(
   cors({
-    origin: strictCors
-      ? (origin, cb) => {
+    origin: allowAny
+      ? true
+      : (origin, cb) => {
+          // Same-origin / non-browser (curl, server-to-server) — no Origin header.
           if (!origin) return cb(null, true);
-          if (allowedOrigins.includes(origin)) return cb(null, true);
+          if (allowedOrigins && allowedOrigins.includes(origin)) return cb(null, true);
           return cb(null, false);
-        }
-      : true,
+        },
     credentials: true,
   }),
 );
 
 // ---- CSRF-style guard: block cross-origin state-changing requests ---------
-// (Enforced only in strict mode; otherwise CORS above reflects any origin.)
-// Works with cross-origin credentialed cookies: the browser always sends
-// `Origin` for cross-site POSTs, and CORS refuses to reflect responses to
-// disallowed origins.
+// Always enforced (not gated on strictCors) so that any future regression of
+// the CORS allowlist still blocks cross-origin writes. Safe methods and
+// same-origin writes pass.
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 app.use((req, res, next) => {
-  if (!strictCors) return next();
   if (SAFE_METHODS.has(req.method)) return next();
   const origin = req.headers.origin;
   if (!origin) return next(); // same-origin / non-browser
-  if (allowedOrigins.includes(origin)) return next();
+  if (allowAny) return next();
+  if (allowedOrigins && allowedOrigins.includes(origin)) return next();
   try {
     if (new URL(origin).host === req.headers.host) return next();
   } catch {
