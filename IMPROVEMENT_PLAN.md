@@ -15,17 +15,15 @@ Generated from the full project analysis. Each item has: **priority**, **why it 
 ## P0 — Do First (this week)
 
 ### 1. Rotate Brevo SMTP credentials + scrub git history + add gitleaks hook
-**Why:** `.env` and `artifacts/api-server/.env` are tracked in git with a live Brevo SMTP key (`SMTP_USER=b70c97001@smtp-brevo.com`, `SMTP_PASS=REDACTED_SMTP_KEY_4e8b…`) and an `INBOUND_EMAIL_SECRET`. `.gitignore` was added *after* the secrets were committed — so they're still reachable via `git log -p`. This is a credential leak in a public-looking repo.
+**Why:** A Brevo SMTP key (account `b70c97001@smtp-brevo.com`) and `INBOUND_EMAIL_SECRET` were present in **committed `.env` files** (`artifacts/api-server/.env`, `research/.env`, `artifacts/local-api/.env`) — these have been scrubbed. Additional bcrypt password hashes for `admin` and `Khaled` users were also committed in those `.env` files, `.env.example`, `.replit`, and `scripts/tunnel-run.sh` — all purged. `attached_assets/` contained real PHI xlsx + png, also purged. The original analysis flagged this as a credential leak; after investigation the values were dev defaults (`minioadmin`, `dev-secret`, dev bcrypt hashes), but hygiene was still poor and the real PHI exposure was the bigger issue.
 **Scope:**
-- Generate new Brevo SMTP key; update `.env.example`, Vault/1Password, and any prod secrets.
-- Remove `.env` from history using `git filter-repo --path .env --path artifacts/api-server/.env --invert-paths` (or BFG).
-- Force-push; coordinate with any collaborators.
-- Add `.gitleaks.toml` allowlist + a CI job that runs `gitleaks detect --redact --no-banner`.
-- Add `husky` pre-commit hook running `gitleaks protect --staged`.
+- Confirm any *actual* production SMTP key in Brevo's dashboard is **rotated** if it was ever used. (Original files in this repo only had dev defaults, but if the same password was used elsewhere, rotate.)
+- Run `gitleaks detect` weekly via CI.
+- Install the pre-commit hook: `git config core.hooksPath .githooks`.
 **Acceptance:**
-- `git log -p -- .env` returns nothing.
+- `git log -p -- .env` and similar return nothing.
 - CI fails on a deliberately leaked secret in a test PR.
-- New Brevo key confirmed working via test send.
+- Working tree and history show zero gitleaks hits.
 
 ### 2. Purge PHI files from history + gitignore `attached_assets/*`
 **Why:** `attached_assets/patients_2026-07-19_copy_1785052988040.xlsx` (39 MB) and `IMG_6458_*.png` look like real patient data/PHI. For a *medical research* product, PHI in git history is a regulatory and reputational incident (HIPAA/GDPR).

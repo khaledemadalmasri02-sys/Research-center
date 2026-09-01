@@ -40,7 +40,7 @@ const app = new Hono<{
   };
 }>();
 
-const KNOWN_BCRYPT_HASH = "REDACTED_BCRYPT_HASH";
+const KNOWN_BCRYPT_HASH = "$2b$10$your-bcrypt-hash-here";
 
 function getCookieVal(c: Context, key: string): string | undefined {
   const cookie = c.req.header("Cookie");

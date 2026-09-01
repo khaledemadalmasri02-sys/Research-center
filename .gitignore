@@ -56,4 +56,29 @@ research/.cloudflared-token
 .env.*
 !.env.example
 artifacts/api-server/.env
+artifacts/local-api/.env
+research/.env
 research/.dev.vars
+.replit
+.replit.nix
+
+# Wrangler local state (D1/KV SQLite, caches, observability) — never commit
+research/.wrangler/
+artifacts/**/*.wrangler/
+
+# Build artefacts (rebuilt on every deploy)
+/research/public/assets/*.js
+/research/public/assets/*.css
+/research/public/tour/*.mp4
+/artifacts/research-data/public/tour/*.mp4
+/artifacts/research-data/remotion/out/
+
+# Attached assets — only synthetic fixtures belong in git (see attached_assets/fixtures/)
+/attached_assets/*.xlsx
+/attached_assets/*.png
+/attached_assets/*.csv
+/attached_assets/*.pdf
+!/attached_assets/fixtures/
+
+# Local githooks (already executable, but git config core.hooksPath uses them)
+/.githooks/*.local

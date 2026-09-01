@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Pre-commit hook: scan staged files with gitleaks.
+# Install: git config core.hooksPath .githooks
+
+set -euo pipefail
+
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "gitleaks not found in PATH; skipping secret scan."
+  echo "Install: https://github.com/gitleaks/gitleaks/releases"
+  exit 0
+fi
+
+echo "[pre-commit] Running gitleaks on staged files..."
+gitleaks protect --no-banner --config .gitleaks.toml --staged --redact

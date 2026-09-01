@@ -2,7 +2,7 @@ import type { Next } from "hono";
 import bcrypt from "bcryptjs";
 import type { AppContext } from "./env";
 
-export const KNOWN_BCRYPT_HASH = "REDACTED_BCRYPT_HASH";
+export const KNOWN_BCRYPT_HASH = "$2b$10$your-bcrypt-hash-here";
 
 export function validUsername(value?: string): boolean {
   return !!value && value.length >= 3 && value.length <= 64 && /^[a-zA-Z0-9_.-]+$/.test(value);

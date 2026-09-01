@@ -1,0 +1,65 @@
+title = "Research-center gitleaks config"
+
+# Allow-list known placeholders and false-positive patterns
+[allowlist]
+description = "Allow listed safe matches"
+paths = [
+  # Placeholder strings used in fixtures and docs
+  '''IMPROVEMENT_PLAN\.md''',
+  '''.*/scripts/test-send\.ts$''',
+  # Remotion scene uses literal "REDACTED" as a placeholder
+  '''artifacts/research-data/remotion/src/scenes\.tsx$''',
+]
+regexes = [
+  '''^REDACTED(_[A-Z0-9_]+)?$''',
+  '''^REDACTED$''',
+  '''REDACTED_[A-Z0-9_]+''',
+  '''minioadmin''',
+  '''dev-secret(-change-me)?''',
+  '''your-bcrypt-hash-here''',
+  '''your-session-secret-here-change-in-production''',
+  '''admin@localhost''',
+  '''localhost:300[04]''',
+  '''localhost:5432''',
+  '''localhost:9000''',
+  '''localhost:9001''',
+  '''ngrok-free\.dev''',
+]
+stopwords = [
+  "example",
+  "placeholder",
+  "changeme",
+  "change-me",
+  "your-password",
+  "your-secret",
+  "dummy",
+  "test",
+  "fixture",
+  "lorem",
+  "ipsum",
+]
+
+[[rules]]
+id = "generic-api-key"
+description = "Generic API key with high entropy"
+regex = '''(?i)(?:api[_-]?key|access[_-]?token|auth[_-]?token|bearer|client[_-]?secret|secret[_-]?key)["'\s:=]+["']?[A-Za-z0-9_\-]{32,}["']?'''
+keywords = ["api_key", "api-key", "apikey", "access_token", "auth_token", "client_secret", "secret_key"]
+entropy = 3.8
+
+[[rules]]
+id = "brevo-smtp-token"
+description = "Brevo SMTP password pattern"
+regex = '''xsmtpsib-[A-Za-z0-9]{16,}'''
+keywords = ["xsmtpsib"]
+
+[[rules]]
+id = "inbound-email-secret"
+description = "INBOUND_EMAIL_SECRET value in tracked .env or .toml"
+regex = '''(?i)INBOUND_EMAIL_SECRET\s*=\s*['"]?[A-Za-z0-9_\-]{16,}['"]?'''
+keywords = ["INBOUND_EMAIL_SECRET"]
+
+[[rules]]
+id = "private-key-pem"
+description = "PEM private key block"
+regex = '''-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'''
+keywords = ["PRIVATE KEY"]

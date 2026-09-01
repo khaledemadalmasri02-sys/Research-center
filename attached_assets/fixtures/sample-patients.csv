@@ -1,0 +1,6 @@
+patientId,patientName,age,sex,dateOfVisit,chiefComplaint
+P001,John Doe,45,M,2026-01-15,Chest pain
+P002,Jane Smith,32,F,2026-01-16,Headache
+P003,Bob Wilson,58,M,2026-01-17,Shortness of breath
+P004,Alice Brown,27,F,2026-01-18,Abdominal pain
+P005,Charlie Davis,61,M,2026-01-19,Back pain
