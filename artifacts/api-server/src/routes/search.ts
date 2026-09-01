@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { desc, eq, and, or, sql } from "drizzle-orm";
+import { desc, eq, and, sql } from "drizzle-orm";
 import { db, recordsTable, recordDefinitionsTable } from "@workspace/db";
 import { requireAuth } from "./auth";
 
@@ -24,9 +24,8 @@ async function canReadDefinition(req: Request, id: number): Promise<boolean> {
   const [def] = await db.select().from(recordDefinitionsTable).where(eq(recordDefinitionsTable.id, id)).limit(1);
   if (!def) return false;
   const s = scopeOf(req);
-  if (def.shared) return true;
-  if (def.userId === s.userId || s.isAdmin) return true;
-  return false;
+  // Collections are private: only their owner may read them.
+  return def.userId === s.userId;
 }
 
 function buildFilters(filters: Record<string, unknown> | null) {
@@ -67,7 +66,8 @@ router.get("/records/:definitionId/search", requireAuth, async (req: Request, re
     return;
   }
   const s = scopeOf(req);
-  if (!def.shared && !s.isAdmin && def.userId !== s.userId) {
+  // Collections are private: only the owner may search their records.
+  if (def.userId !== s.userId) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -78,9 +78,9 @@ router.get("/records/:definitionId/search", requireAuth, async (req: Request, re
   const limit = Math.min(Number(req.query.limit) || 100, 500);
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
-  const conditions = [];
-  conditions.push(eq(recordsTable.definitionId, definitionId));
-  if (!s.scopeAll && !def.shared) conditions.push(eq(recordsTable.userId, s.userId));
+  const conditions = [eq(recordsTable.definitionId, definitionId)];
+  // Records are private: only the current user's own records are searched.
+  conditions.push(eq(recordsTable.userId, s.userId));
   if (q) conditions.push(sql`"search_tsv" @@ plainto_tsquery('english', ${q})`);
   for (const f of buildFilters(filters)) conditions.push(f);
 
@@ -113,15 +113,8 @@ router.get("/search/global", requireAuth, async (req: Request, res: Response) =>
   const offset = Math.max(0, Number(req.query.offset) || 0);
 
   const conditions = [];
-  if (!s.scopeAll) {
-    conditions.push(
-      or(
-        eq(recordsTable.userId, s.userId),
-        // shared definitions are readable by everyone
-        sql`"definition_id" IN (SELECT "id" FROM "record_definitions" WHERE "shared" = true)`,
-      ),
-    );
-  }
+  // Records are private: only the current user's own records are searched.
+  conditions.push(eq(recordsTable.userId, s.userId));
   if (q) conditions.push(sql`"search_tsv" @@ plainto_tsquery('english', ${q})`);
   for (const f of buildFilters(filters)) conditions.push(f);
 

@@ -1,6 +1,5 @@
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
-import { useLocation } from "wouter";
 import { Layout } from "@/components/layout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,7 @@ import { ImportImagesDialog } from "@/components/import-images-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { normalizeRadiologyImages, resolveImageSrc } from "@/lib/radiology-images";
+import { useDesktopNav } from "@/lib/desktop-nav";
 
 type PatientRow = {
   id: number;
@@ -80,7 +80,7 @@ function renderCell(value: unknown) {
 export default function Patients() {
   const { data: def } = useActiveDefinition();
   const activeDefId = def?.id;
-  const [, navigate] = useLocation();
+  const dn = useDesktopNav();
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -473,6 +473,11 @@ export default function Patients() {
   const editHref = (p: PatientRow) =>
     p.definitionId === patientsDefId ? `/patients/${p.id}/edit` : `/records/${p.definitionId}/${p.id}`;
 
+  const viewAppId = (p: PatientRow) => (p.definitionId === patientsDefId ? "patient-view" : "record-detail");
+  const editAppId = (p: PatientRow) => (p.definitionId === patientsDefId ? "patient-edit" : "record-detail");
+  const openView = (p: PatientRow) => dn.open(viewAppId(p), viewHref(p));
+  const openEdit = (p: PatientRow) => dn.open(editAppId(p), editHref(p));
+
   const title =
     selectedDefs.length === 1
       ? selectedDefs[0].name
@@ -572,7 +577,7 @@ export default function Patients() {
               {isImporting ? "Importing…" : "Import JSON"}
             </Button>
             <input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={handleJsonImport} />
-            <Button onClick={() => navigate(newHref)}>
+            <Button onClick={() => dn.open(primaryIsPatients ? "patients/new" : "records/:definitionId/new", newHref)}>
               <Plus className="w-4 h-4 mr-2" /> {primaryIsPatients ? "New Patient" : "New Record"}
             </Button>
           </div>
@@ -693,7 +698,7 @@ export default function Patients() {
                           <button
                             type="button"
                             className="text-left text-blue-600 hover:underline underline-offset-2 font-medium"
-                            onClick={() => navigate(viewHref(p))}
+                            onClick={() => openView(p)}
                             title="Open record"
                           >
                             {p.patientId ?? "—"}
@@ -719,7 +724,7 @@ export default function Patients() {
                                       <button
                                         type="button"
                                         className="text-left text-blue-600 hover:underline underline-offset-2 font-medium max-w-full truncate block"
-                                        onClick={() => navigate(viewHref(p))}
+                                        onClick={() => openView(p)}
                                         title="Open record"
                                       >
                                         {v == null || v === "" ? "—" : String(v)}
@@ -734,10 +739,10 @@ export default function Patients() {
                     )}
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => navigate(viewHref(p))} title="View">
+                        <Button size="sm" variant="ghost" onClick={() => openView(p)} title="View">
                           <Eye className="h-4 w-4" />
                         </Button>
-                        <Button size="sm" variant="ghost" onClick={() => navigate(editHref(p))} title="Edit">
+                        <Button size="sm" variant="ghost" onClick={() => openEdit(p)} title="Edit">
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <AlertDialog>

@@ -1,28 +1,11 @@
 import { useLayoutEffect, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { X, ChevronLeft, ChevronRight, PlayCircle } from "lucide-react";
+import { X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { useProductTour, type TourStep } from "@/hooks/use-product-tour";
-import { fetchTourConfig, resolveTourVideoSrc } from "@/lib/tour-config";
-
-const ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  welcome: PlayCircle,
-  dashboard: PlayCircle,
-  patients: PlayCircle,
-  collections: PlayCircle,
-  dataAnalysis: PlayCircle,
-  feedback: PlayCircle,
-  moreFeatures: PlayCircle,
-  myActivity: PlayCircle,
-  apiTokens: PlayCircle,
-  sessions: PlayCircle,
-  notifications: PlayCircle,
-  theme: PlayCircle,
-  language: PlayCircle,
-  admin: PlayCircle,
-  finish: PlayCircle,
-};
+import { fetchTourConfig, resolveTourVideoSrc, resolveTourSource } from "@/lib/tour-config";
+import { TourScheme } from "@/components/tour-scheme";
 
 const PAD = 8;
 const TOOLTIP_W = 340;
@@ -42,7 +25,8 @@ export function ProductTour() {
   const [videoSrc, setVideoSrc] = useState("");
 
   const current: TourStep | undefined = steps[step];
-  const isCenter = !current || current.placement === "center" || !current.selector;
+  const center =
+    !current || current.placement === "center" || !current.selector || rect === null;
 
   const { data: tourConfig } = useQuery({
     queryKey: ["tour-config"],
@@ -71,7 +55,7 @@ export function ProductTour() {
 
   useLayoutEffect(() => {
     setVideoOk(true);
-    if (!open || isCenter || !current?.selector) {
+    if (!open || !current?.selector || current.placement === "center") {
       setRect(null);
       return;
     }
@@ -83,28 +67,36 @@ export function ProductTour() {
       window.removeEventListener("resize", update);
       window.removeEventListener("scroll", update, true);
     };
-  }, [open, step, isCenter, current]);
+  }, [open, step, center, current]);
 
   if (!open || !current) return null;
 
-  const Icon = ICONS[current.key] ?? PlayCircle;
   const title = t(`tour.steps.${current.key}.title`);
   const body = t(`tour.steps.${current.key}.body`);
+  const source = resolveTourSource(tourConfig, current.key);
 
-  // Tooltip placement for element-highlight steps.
+  // Tooltip placement for element-highlight steps. Always clamped to stay
+  // fully within the viewport (the card can otherwise float off-screen when
+  // the highlighted element sits low, e.g. the bottom-of-sidebar bell).
   let tooltipStyle: React.CSSProperties = {};
-  if (!isCenter && rect) {
+  if (!center && rect) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const spaceRight = vw - rect.right;
-    const spaceLeft = rect.left;
-    if (spaceRight > TOOLTIP_W + 24) {
-      tooltipStyle = { top: Math.max(12, rect.top), left: rect.right + PAD };
-    } else if (spaceLeft > TOOLTIP_W + 24) {
-      tooltipStyle = { top: Math.max(12, rect.top), right: vw - rect.left + PAD };
+    const estH = 400; // approximate card height (media + text)
+    const gap = PAD;
+    const clampTop = (top: number) => Math.max(12, Math.min(top, vh - estH - 12));
+    const clampLeft = (left: number) => Math.max(12, Math.min(left, vw - TOOLTIP_W - 12));
+    const horizCenter = clampLeft(rect.left + rect.width / 2 - TOOLTIP_W / 2);
+
+    const rightFits = rect.right + gap + TOOLTIP_W <= vw;
+    const leftFits = rect.left - gap - TOOLTIP_W >= 0;
+
+    if (rightFits) {
+      tooltipStyle = { left: rect.right + gap, top: clampTop(rect.top) };
+    } else if (leftFits) {
+      tooltipStyle = { right: vw - rect.left + gap, top: clampTop(rect.top) };
     } else {
-      const left = Math.min(Math.max(12, rect.left + rect.width / 2 - TOOLTIP_W / 2), vw - TOOLTIP_W - 12);
-      tooltipStyle = { top: Math.min(rect.bottom + PAD, vh - 220), left };
+      tooltipStyle = { top: clampTop(rect.bottom + gap), left: horizCenter };
     }
   }
 
@@ -114,7 +106,7 @@ export function ProductTour() {
       <div className="absolute inset-0" />
 
       {/* Spotlight ring + darkening for element steps. */}
-      {!isCenter && rect && (
+      {!center && rect && (
         <div
           className="pointer-events-none absolute z-[60] rounded-lg ring-2 ring-primary"
           style={{
@@ -128,32 +120,40 @@ export function ProductTour() {
       )}
 
       {/* Centered dim backdrop for center steps. */}
-      {isCenter && <div className="absolute inset-0 bg-black/70" />}
+      {center && <div className="absolute inset-0 bg-black/70" />}
 
       {/* Guide card. */}
       <div
         className={
-          isCenter
+          center
             ? "absolute z-[61] left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(92vw,360px)]"
             : "absolute z-[61] w-[min(92vw,340px)]"
         }
-        style={isCenter ? undefined : tooltipStyle}
+        style={center ? undefined : tooltipStyle}
       >
-        <div className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden">
+        <div
+          className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
+          style={{ maxHeight: "calc(100vh - 24px)", overflowY: "auto" }}
+        >
           {/* Media area: optional video clip with icon fallback. */}
-          <div className="relative aspect-video bg-gradient-to-br from-primary/15 to-muted flex items-center justify-center">
-            {videoOk ? (
-              <video
-                className="h-full w-full object-cover"
-                src={videoSrc}
-                autoPlay
-                muted
-                loop
-                playsInline
-                onError={handleVideoError}
-              />
-            ) : null}
-            {!videoOk && <Icon className="h-14 w-14 text-primary/70" />}
+          <div className="relative aspect-video bg-gradient-to-br from-primary/15 to-muted overflow-hidden">
+            {source === "screen" ? (
+              videoOk ? (
+                <video
+                  className="h-full w-full object-cover"
+                  src={videoSrc}
+                  autoPlay
+                  muted
+                  loop
+                  playsInline
+                  onError={handleVideoError}
+                />
+              ) : (
+                <TourScheme stepKey={current.key} />
+              )
+            ) : (
+              <TourScheme stepKey={current.key} />
+            )}
           </div>
 
           <div className="p-4 space-y-3">

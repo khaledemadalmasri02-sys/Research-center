@@ -21,6 +21,7 @@ export interface AppBindings {
   R2_BUCKET?: R2Bucket;
   GROQ_API_KEY?: string;
   API_BACKEND_URL?: string;
+  INBOUND_EMAIL_SECRET?: string;
 }
 
 export interface AppVariables {

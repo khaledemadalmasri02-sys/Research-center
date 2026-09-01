@@ -34,6 +34,7 @@ import { parseVitals, VITAL_DEFS } from "@/lib/vitals-utils";
 import { uploadImage } from "@/lib/upload";
 import { normalizeRadiologyImages, resolveImageSrc } from "@/lib/radiology-images";
 import { useToast } from "@/hooks/use-toast";
+import { useDesktopNav } from "@/lib/desktop-nav";
 
 type RecData = Record<string, any>;
 
@@ -249,6 +250,7 @@ export default function PatientRecordView() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: def } = useActiveDefinition();
+  const dn = useDesktopNav();
 
   const { data: recData, isLoading } = useQuery({
     queryKey: ["record", recordId],
@@ -322,7 +324,7 @@ export default function PatientRecordView() {
             <Button variant="outline" onClick={() => window.print()}>
               <Printer className="w-4 h-4 mr-2" /> Print
             </Button>
-            <Button variant="outline" onClick={() => setLocation(`/patients/${recordId}/edit`)}>
+            <Button variant="outline" onClick={() => dn.open("patient-edit", `/patients/${recordId}/edit`)}>
               <Edit className="w-4 h-4 mr-2" /> Edit
             </Button>
             <ImportImagesDialog recordId={recordId} onImported={() => queryClient.invalidateQueries({ queryKey: ["record", recordId] })} />

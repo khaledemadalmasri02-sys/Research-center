@@ -107,6 +107,9 @@ for i in $(seq 1 60); do
 done
 curl -sf "http://localhost:$API_PORT/api/healthz" >/dev/null 2>&1 || { echo "ERROR: api-server did not start (see $KILO/api-server.log)"; exit 1; }
 
+echo "==> 5/5 Applying D1 schema migration"
+( cd research && pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql )
+
 echo "==> 5/5 Linking Worker (research-center.fit) to the Cloudflare tunnel"
 ( cd research && \
   printf '%s' "https://api.research-center.fit" | pnpm exec wrangler secret put --env production API_BACKEND_URL && \

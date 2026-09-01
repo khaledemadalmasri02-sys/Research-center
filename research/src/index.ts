@@ -1,4 +1,5 @@
 import { Hono, Context } from "hono";
+import PostalMime from "postal-mime";
 import { ensureSchema } from "./lib/db-bootstrap";
 import { consentApp } from "./routes/consent";
 import { deidentifyApp } from "./routes/deidentify";
@@ -13,6 +14,7 @@ import { studiesApp } from "./routes/studies";
 import { mlApp } from "./routes/ml";
 import { reportsApp } from "./routes/reports";
 import { gdprApp } from "./routes/gdpr";
+import { unsubscribeApp } from "./routes/unsubscribe";
 import { ingestApp } from "./routes/ingest";
 import { searchApp } from "./routes/search";
 import { issueCsrfToken } from "./lib/security";
@@ -105,6 +107,7 @@ app.route("/api/reports", reportsApp);
 app.route("/api/gdpr", gdprApp);
 app.route("/api/ingest", ingestApp);
 app.route("/api/search", searchApp);
+app.route("/api/unsubscribe", unsubscribeApp);
 // /api/saved-views is handled by the Postgres-backed api-server (proxied below),
 // so it shares the same session as the rest of the records feature.
 
@@ -144,6 +147,15 @@ async function proxyToBackend(c: AppContext): Promise<Response> {
   const cfIp = c.req.header("cf-connecting-ip");
   if (cfIp) req.headers.set("X-Forwarded-For", cfIp);
 
+  // The browser→Worker leg is always HTTPS (Cloudflare terminates TLS); the
+  // Worker→api-server leg is the internal/private hop. Tell the api-server the
+  // original request was secure so it issues the `Secure` session cookie —
+  // express-session drops Set-Cookie when X-Forwarded-Proto isn't https (with
+  // `trust proxy` enabled), which otherwise silently breaks login.
+  req.headers.set("X-Forwarded-Proto", "https");
+  const host = c.req.header("host");
+  if (host) req.headers.set("X-Forwarded-Host", host);
+
   const res = await fetch(req);
   return res;
 }
@@ -169,4 +181,50 @@ app.all("*", async (c: AppContext) => {
   return new Response("Not Found", { status: 404 });
 });
 
-export default app;
+// ---- Inbound email (Cloudflare Email Routing) ------------------------------
+// Receives messages addressed to the domain (e.g. support@research-center.fit),
+// parses them, and forwards them to the Postgres-backed api-server which stores
+// them and notifies admins. Requires an Email Routing rule that targets this
+// Worker, plus the INBOUND_EMAIL_SECRET Worker secret matching the api-server's
+// INBOUND_EMAIL_SECRET env var.
+async function handleEmail(
+  message: ForwardableEmailMessage,
+  env: AppBindings,
+): Promise<void> {
+  const backend = (env.API_BACKEND_URL || "").replace(/\/+$/, "");
+  if (!backend) {
+    message.setReject("Backend not configured");
+    return;
+  }
+
+  const raw = await new Response(message.raw).arrayBuffer();
+  const parsed = await PostalMime.parse(raw);
+
+  const res = await fetch(`${backend}/api/inbound-email`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-inbound-email-secret": env.INBOUND_EMAIL_SECRET ?? "",
+    },
+    body: JSON.stringify({
+      from: message.from,
+      to: message.to,
+      subject: parsed.subject,
+      text: parsed.text,
+      html: parsed.html ?? null,
+      messageId: message.headers.get("message-id") ?? null,
+      inReplyTo: message.headers.get("in-reply-to") ?? null,
+    }),
+  });
+
+  if (!res.ok) {
+    // Backend storage failed — bounce so the sender knows delivery didn't happen.
+    message.setReject(`Backend rejected inbound email (HTTP ${res.status})`);
+  }
+}
+
+export default {
+  fetch: (request: Request, env: AppBindings, ctx: ExecutionContext) =>
+    app.fetch(request, env, ctx),
+  email: handleEmail,
+} satisfies ExportedHandler<AppBindings>;

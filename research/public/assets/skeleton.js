@@ -1,1 +1,1 @@
-import{j as r,a as s}from"./index.js";function t({className:a,...e}){return r.jsx("div",{className:s("animate-pulse rounded-md bg-primary/10",a),...e})}export{t as S};
+import{j as s,d as a}from"./index.js";function t({className:e,...r}){return s.jsx("div",{className:a("animate-pulse rounded-md bg-primary/10",e),...r})}export{t as S};

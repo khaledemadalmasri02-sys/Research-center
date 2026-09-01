@@ -75,6 +75,22 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS IDX_audit_created ON audit_log (created_at);
 CREATE INDEX IF NOT EXISTS IDX_audit_user ON audit_log (user_id);
 
+-- Email unsubscribes (RFC 8058 List-Unsubscribe-Post one-click).
+-- One row per (email, category) so a user can unsubscribe from OTP mail but
+-- still receive admin notifications, etc. A row with category='all' means
+-- "unsubscribe from every category we send to this address".
+CREATE TABLE IF NOT EXISTS email_unsubscribes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'all',
+  source TEXT,
+  user_agent TEXT,
+  ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (email, category)
+);
+CREATE INDEX IF NOT EXISTS IDX_email_unsubscribes_email ON email_unsubscribes (email);
+
 CREATE TABLE IF NOT EXISTS api_tokens (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,

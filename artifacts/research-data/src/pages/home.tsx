@@ -267,7 +267,7 @@ export default function Home() {
             </Stagger>
 
             {/* Per-collection breakdown */}
-            {perCollection.length > 1 && (
+            {perCollection.length > 0 && (
               <FadeIn>
               <Card>
                 <CardHeader>

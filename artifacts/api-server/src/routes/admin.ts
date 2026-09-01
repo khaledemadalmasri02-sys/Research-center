@@ -16,11 +16,14 @@ function isUniqueViolation(e: unknown): boolean {
   return (e as { code?: string })?.code === "23505";
 }
 
-// List sign-up requests (admin only)
+// List sign-up requests awaiting admin approval (admin only). Only requests whose
+// email has been verified via OTP ("pending") are shown; unverified ("unverified")
+// rows are not yet real approval requests.
 router.get("/signups", requireAdmin, async (_req: Request, res: Response) => {
   const requests = await db
     .select()
     .from(signupRequestsTable)
+    .where(eq(signupRequestsTable.status, "pending"))
     .orderBy(desc(signupRequestsTable.createdAt));
   res.json({ requests });
 });

@@ -50,3 +50,10 @@ Thumbs.db
 
 # Local cloudflared tunnel token (secret) — optional fallback for pnpm run tunnel:run
 research/.cloudflared-token
+
+# Local environment / secrets — never commit
+.env
+.env.*
+!.env.example
+artifacts/api-server/.env
+research/.dev.vars

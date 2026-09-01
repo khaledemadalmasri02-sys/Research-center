@@ -15,6 +15,9 @@ echo "==> Syncing build into research/public"
 rm -rf research/public/assets research/public/index.html research/public/favicon.svg research/public/robots.txt research/public/_commonjs-dynamic-modules.js 2>/dev/null || true
 cp -r artifacts/research-data/dist/public/. research/public/
 
+echo "==> Applying D1 schema migration"
+( cd research && pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql )
+
 echo "==> Deploying worker (env: production)"
 ( cd research && pnpm install && pnpm exec wrangler deploy --env production )
 

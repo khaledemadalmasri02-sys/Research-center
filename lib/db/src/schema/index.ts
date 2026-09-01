@@ -1,6 +1,7 @@
 export * from "./patients";
 export * from "./radiology-images";
 export * from "./users";
+export * from "./login-challenges";
 export * from "./audit";
 export * from "./records";
 export * from "./feedback";

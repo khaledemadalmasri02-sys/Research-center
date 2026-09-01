@@ -159,6 +159,13 @@ export S3_SIGNED_URL_EXPIRES_SECONDS="300"
 export PUBLIC_OBJECT_SEARCH_PATHS="/mednexus"
 export PRIVATE_OBJECT_DIR="/objects"
 export NODE_ENV="production"
+# Outbound email via Brevo: load the SMTP credentials from the api-server's own
+# .env. Without these, sendEmail() silently no-ops (returns false) and OTP /
+# notification emails are never sent. Only the SMTP_* lines are sourced so we
+# don't clobber PORT / DATABASE_URL already exported above.
+set -a
+. <(grep -E '^(SMTP_|UNSUBSCRIBE_STATUS_TOKEN|MAIL_)' artifacts/api-server/.env 2>/dev/null || true)
+set +a
 setsid nohup pnpm exec tsx artifacts/api-server/src/index.ts > "$KILO/api-server.log" 2>&1 &
 echo $! > "$KILO/api-server.pid"
 for i in $(seq 1 60); do
@@ -177,12 +184,38 @@ echo "==> Syncing build into research/public"
 rm -rf research/public/assets research/public/index.html research/public/favicon.svg research/public/robots.txt research/public/_commonjs-dynamic-modules.js 2>/dev/null || true
 cp -r artifacts/research-data/dist/public/. research/public/
 
-# 6. Point the Worker at the tunnel and deploy
+# 6. Apply the D1 schema (idempotent CREATE TABLE IF NOT EXISTS) and point the
+#    Worker at the tunnel, then deploy. The schema bootstrap is also re-run
+#    lazily on the Worker's first request, but applying it here keeps the
+#    database in lockstep with the source-controlled schema.sql (so tables
+#    like email_unsubscribes exist on the first hit rather than the first
+#    request creating them).
+echo "==> Applying D1 schema migration"
+( cd research && pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql )
+
 echo "==> Setting Worker secret API_BACKEND_URL = https://api.research-center.fit"
 ( cd research && \
   pnpm install && \
   printf '%s' "https://api.research-center.fit" | pnpm exec wrangler secret put --env production API_BACKEND_URL && \
   pnpm exec wrangler deploy --env production )
+
+# 6b. Optional: also set UNSUBSCRIBE_STATUS_TOKEN on the Worker so the
+#     api-server's pre-send unsubscribe guard can authenticate against
+#     /api/unsubscribe/status. Sourced from the api-server's own .env (same
+#     pattern as the SMTP_* lines above). If unset, the Worker serves the
+#     status endpoint unauthenticated — fine for dev, not recommended in
+#     production.
+if [ -n "${UNSUBSCRIBE_STATUS_TOKEN:-}" ]; then
+  echo "==> Setting Worker secret UNSUBSCRIBE_STATUS_TOKEN (from env)"
+  ( cd research && \
+    printf '%s' "$UNSUBSCRIBE_STATUS_TOKEN" | pnpm exec wrangler secret put --env production UNSUBSCRIBE_STATUS_TOKEN )
+else
+  echo "==> Skipping UNSUBSCRIBE_STATUS_TOKEN (not set). To enable pre-send"
+  echo "    unsubscribe enforcement, add to artifacts/api-server/.env:"
+  echo "      UNSUBSCRIBE_STATUS_TOKEN=<32-byte random>"
+  echo "      MAIL_UNSUBSCRIBE_LOOKUP_URL=https://research-center.fit"
+  echo "      MAIL_UNSUBSCRIBE_LOOKUP_TOKEN=<same 32-byte random>"
+fi
 
 echo ""
 echo "==> DONE. research-center.fit proxies /api -> https://api.research-center.fit -> local api-server."

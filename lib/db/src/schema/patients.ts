@@ -4,6 +4,7 @@ import { z } from "zod/v4";
 
 export const patientsTable = pgTable("patients", {
   id: serial("id").primaryKey(),
+  userId: integer("user_id"),
   collectionName: text("collection_name"),
   collectionDate: text("collection_date"),
   collectionType: text("collection_type"), // Normal | Abnormal | Suspicious

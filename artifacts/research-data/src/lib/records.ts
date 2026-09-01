@@ -51,6 +51,12 @@ export const recordsApi = {
     );
   },
 
+  // Per-user "Patients" data collection (created/owned by the current user).
+  getPatients: () =>
+    fetch("/api/records/patients", { credentials: "include" }).then((r) =>
+      json<{ definition: RecordDefinition; records: RecordRow[] }>(r),
+    ),
+
   createDefinition: (name: string, fields: FieldDef[]) =>
     fetch("/api/records/definitions", {
       method: "POST",
@@ -217,26 +223,20 @@ export function usePatientsDefinition() {
   return useQuery({
     queryKey: ["patients-definition"],
     queryFn: async () => {
-      const { definitions } = await recordsApi.listDefinitions({ shared: true });
-      const def = definitions.find((d) => d.name === PATIENTS_DEFINITION_NAME);
-      if (!def) throw new Error("Patients definition not found");
-      return def;
+      const { definition } = await recordsApi.getPatients();
+      return definition;
     },
   });
 }
 
 // Returns the currently active Data Collection (the one shown by default in the
-// directory). Falls back to the shared "Patients" collection.
+// directory). Falls back to the current user's "Patients" collection.
 export function useActiveDefinition() {
   return useQuery({
     queryKey: ["active-definition"],
     queryFn: async () => {
-      const { definitions } = await recordsApi.listDefinitions({ shared: true });
-      const active = definitions.find((d) => d.isActive);
-      if (active) return active;
-      const fallback = definitions.find((d) => d.name === PATIENTS_DEFINITION_NAME) ?? definitions[0];
-      if (!fallback) throw new Error("No data collection available");
-      return fallback;
+      const { definition } = await recordsApi.getPatients();
+      return definition;
     },
   });
 }

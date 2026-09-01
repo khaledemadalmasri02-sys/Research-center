@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { eq, desc, and, or, sql } from "drizzle-orm";
+import { eq, desc, and, sql } from "drizzle-orm";
 import {
   db,
   recordDefinitionsTable,
@@ -10,6 +10,7 @@ import {
   type RecordFieldType,
 } from "@workspace/db";
 import { requireAuth } from "./auth";
+import { ensureUserPatientsDefinition, syncPatientsToCollection } from "../lib/patientsCollection";
 import { requireEdit } from "../middlewares/requireEdit";
 import { writeAudit, clientIp } from "../lib/audit";
 
@@ -99,34 +100,41 @@ async function canAccessDefinition(req: Request, id: number, write: boolean) {
   const [def] = await db.select().from(recordDefinitionsTable).where(eq(recordDefinitionsTable.id, id)).limit(1);
   if (!def) return { def: null as null, status: 404 as const };
   const s = scopeOf(req);
-  // Shared definitions are readable/usable by all; only the owner or an admin may edit them.
-  if (def.shared) {
-    if (!write) return { def, status: 200 as const };
-    if (def.userId === s.userId || s.isAdmin) return { def, status: 200 as const };
+  // Collections are private to their owner.
+  if (def.userId !== s.userId) {
     return { def: null as null, status: 403 as const };
   }
-  if (def.userId !== s.userId && !s.isAdmin) return { def: null as null, status: 403 as const };
   return { def, status: 200 as const };
 }
 
 // ---- Definitions ----------------------------------------------------------
 router.get("/records/definitions", async (req: Request, res: Response) => {
   const s = scopeOf(req);
-  const sharedOnly = req.query.shared === "1";
-  let where;
-  if (sharedOnly) {
-    where = eq(recordDefinitionsTable.shared, true);
-  } else if (s.scopeAll) {
-    where = undefined;
-  } else {
-    where = or(eq(recordDefinitionsTable.userId, s.userId), eq(recordDefinitionsTable.shared, true));
-  }
+  // Collections are private: only the current user's own collections are returned.
   const defs = await db
     .select()
     .from(recordDefinitionsTable)
-    .where(where)
+    .where(eq(recordDefinitionsTable.userId, s.userId))
     .orderBy(desc(recordDefinitionsTable.createdAt));
   res.json({ definitions: defs });
+});
+
+// Returns the current user's own "Patients" collection (a private mirror of the
+// patients they own) along with its records. Each call re-syncs the collection
+// from the user's patients so the directory always reflects their data.
+router.get("/records/patients", requireAuth, async (req: Request, res: Response) => {
+  const defId = await syncPatientsToCollection(req.session.userId ?? 0);
+  const [def] = await db
+    .select()
+    .from(recordDefinitionsTable)
+    .where(eq(recordDefinitionsTable.id, defId))
+    .limit(1);
+  const records = await db
+    .select()
+    .from(recordsTable)
+    .where(eq(recordsTable.definitionId, defId))
+    .orderBy(desc(recordsTable.createdAt));
+  res.json({ definition: def ?? null, records });
 });
 
 router.post("/records/definitions", requireEdit, async (req: Request, res: Response) => {
@@ -245,37 +253,15 @@ router.get("/records", async (req: Request, res: Response) => {
   const definitionId = req.query.definitionId ? Number(req.query.definitionId) : undefined;
   const definitionIdValid = Number.isInteger(definitionId) ? (definitionId as number) : undefined;
 
-  const conditions = [];
-  if (s.scopeAll) {
-    if (definitionIdValid) conditions.push(eq(recordsTable.definitionId, definitionIdValid));
-  } else if (definitionIdValid) {
-    // Shared collections are readable by everyone; show all their records.
-    const [def] = await db
-      .select()
-      .from(recordDefinitionsTable)
-      .where(eq(recordDefinitionsTable.id, definitionIdValid))
-      .limit(1);
-    if (def?.shared) {
-      conditions.push(eq(recordsTable.definitionId, definitionIdValid));
-    } else {
-      conditions.push(
-        and(eq(recordsTable.userId, s.userId), eq(recordsTable.definitionId, definitionIdValid)),
-      );
-    }
-  } else {
-    // No definition: own records + any shared-definition records.
-    conditions.push(
-      or(
-        eq(recordsTable.userId, s.userId),
-        sql`"definition_id" IN (SELECT "id" FROM "record_definitions" WHERE "shared" = true)`,
-      ),
-    );
+  const conditions = [eq(recordsTable.userId, s.userId)];
+  if (definitionIdValid) {
+    conditions.push(eq(recordsTable.definitionId, definitionIdValid));
   }
 
   const rows = await db
     .select()
     .from(recordsTable)
-    .where(conditions.length ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(recordsTable.createdAt));
 
   res.json({ records: rows });
@@ -328,7 +314,7 @@ router.get("/records/:id", async (req: Request, res: Response) => {
     res.status(404).json({ error: "Record not found" });
     return;
   }
-  if (record.userId !== s.userId && !s.isAdmin) {
+  if (record.userId !== s.userId) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -353,7 +339,7 @@ router.patch("/records/:id", requireEdit, async (req: Request, res: Response) =>
     res.status(404).json({ error: "Record not found" });
     return;
   }
-  if (record.userId !== s.userId && !s.isAdmin) {
+  if (record.userId !== s.userId) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -404,7 +390,7 @@ router.delete("/records/:id", requireEdit, async (req: Request, res: Response) =
     res.status(404).json({ error: "Record not found" });
     return;
   }
-  if (record.userId !== s.userId && !s.isAdmin) {
+  if (record.userId !== s.userId) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -440,7 +426,10 @@ router.patch("/records/definitions/:id/activate", requireAuth, async (req: Reque
     return;
   }
 
-  await db.execute(sql`UPDATE "record_definitions" SET "isActive" = false WHERE "shared" = true`);
+  // Only one collection may be active per user: clear the active flag on the
+  // current user's other collections before activating this one.
+  const s = scopeOf(req);
+  await db.execute(sql`UPDATE "record_definitions" SET "isActive" = false WHERE "user_id" = ${s.userId}`);
   await db
     .update(recordDefinitionsTable)
     .set({ isActive: true, deactivated: false })
@@ -511,9 +500,11 @@ router.patch("/records/definitions/:id/default", requireAuth, async (req: Reques
     res.status(404).json({ error: "Not found" });
     return;
   }
-  // Only one collection can be the default; clear it on all others first.
+  // Only one collection can be the default per user; clear it on the current
+  // user's other collections first.
+  const s = scopeOf(req);
   if (isDefault) {
-    await db.execute(sql`UPDATE "record_definitions" SET "isDefault" = false`);
+    await db.execute(sql`UPDATE "record_definitions" SET "isDefault" = false WHERE "user_id" = ${s.userId}`);
   }
   await db
     .update(recordDefinitionsTable)
@@ -592,8 +583,8 @@ router.get("/records/:definitionId/export", requireAuth, async (req: Request, re
   }
 
   const s = scopeOf(req);
-  const conditions = [eq(recordsTable.definitionId, definitionId)];
-  if (!s.scopeAll && !def.shared) conditions.push(eq(recordsTable.userId, s.userId));
+  // Export is always scoped to the current user's own records in the collection.
+  const conditions = [eq(recordsTable.definitionId, definitionId), eq(recordsTable.userId, s.userId)];
 
   const rows = await db
     .select()
@@ -666,7 +657,7 @@ router.get("/records/:id/images", async (req: Request, res: Response) => {
     res.status(404).json({ error: "Record not found" });
     return;
   }
-  if (record.userId !== s.userId && !s.isAdmin) {
+  if (record.userId !== s.userId) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
@@ -694,7 +685,7 @@ router.post("/records/:id/images", requireEdit, async (req: Request, res: Respon
     res.status(404).json({ error: "Record not found" });
     return;
   }
-  if (record.userId !== s.userId && !s.isAdmin) {
+  if (record.userId !== s.userId) {
     res.status(403).json({ error: "Forbidden" });
     return;
   }

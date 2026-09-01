@@ -111,6 +111,12 @@ if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
 
 app.use(
   session({
+    // Renamed away from the default `connect.sid` to drop stale cookies left
+    // behind by earlier deployments/secrets. Old `connect.sid` cookies can
+    // coexist with a new one (different name scope) and shadow a valid session
+    // when the browser sends both; a fresh name gives every client a single,
+    // clean session cookie.
+    name: "rc_sid",
     store: new PgSession({
       pool,
       createTableIfMissing: false, // table is created at startup in index.ts
@@ -126,6 +132,11 @@ app.use(
       // above (cross-site POSTs from disallowed origins are rejected) plus the
       // CORS allowlist, not by sameSite.
       sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      // Share the session across the apex and www hosts (the Worker serves
+      // both as canonical), so a login on one works on the other. With
+      // SameSite=None + Secure this is safe; X-Forwarded-Proto is forwarded by
+      // the Worker so the Secure cookie is actually issued.
+      domain: process.env.SESSION_COOKIE_DOMAIN || (process.env.NODE_ENV === "production" ? ".research-center.fit" : undefined),
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     },
   }),

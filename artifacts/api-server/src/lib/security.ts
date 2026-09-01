@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { createHash } from "crypto";
 
 export async function hashPassword(pw: string): Promise<string> {
   return bcrypt.hash(pw, 12);
@@ -6,6 +7,16 @@ export async function hashPassword(pw: string): Promise<string> {
 
 export function verifyPassword(pw: string, hash: string): Promise<boolean> {
   return bcrypt.compare(pw, hash);
+}
+
+// Deterministic hash for login-challenge tokens. The token is 256 bits of
+// randomness (randomBytes(32).toString("hex")), so it doesn't need bcrypt's
+// password-stretching — but it MUST be deterministic because we look the
+// challenge up by this hash. bcrypt is non-deterministic (random salt per
+// call), which previously made the login_challenges lookup unreachable and
+// broke login 2FA.
+export function hashLoginToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
 }
 
 export function isValidPassword(pw: string): { ok: boolean; reason?: string } {

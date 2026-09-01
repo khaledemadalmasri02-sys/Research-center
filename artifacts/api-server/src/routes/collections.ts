@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   db,
   recordDefinitionsTable,
@@ -25,14 +25,10 @@ function scopeOf(req: Request): Scope {
   };
 }
 
-// Definitions the current user may read: their own + any shared collection,
-// or every collection when an admin requests scope=all.
+// Definitions the current user may read: only the ones they own. Each user's
+// collections, data, and default are private to them.
 function accessibleDefinitionsWhere(s: Scope) {
-  if (s.scopeAll) return undefined;
-  return or(
-    eq(recordDefinitionsTable.userId, s.userId),
-    eq(recordDefinitionsTable.shared, true),
-  );
+  return eq(recordDefinitionsTable.userId, s.userId);
 }
 
 router.get("/collections/stats", requireAuth, async (req: Request, res: Response) => {

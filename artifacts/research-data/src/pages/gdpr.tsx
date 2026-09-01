@@ -61,7 +61,7 @@ export default function Gdpr() {
                   {candidates.map((c: any) => (
                     <TableRow key={c.patientId}><TableCell>{c.patientId}</TableCell><TableCell>{c.consentCount}</TableCell><TableCell>{c.earliestWithdrawal}</TableCell></TableRow>
                   ))}
-                  {!candidates.length && <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-4">No candidates. Use “Check retention”.</TableCell></TableRow>}
+                  {!candidates.length && <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground py-4">No candidates. Use 'Check retention'.</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </div>

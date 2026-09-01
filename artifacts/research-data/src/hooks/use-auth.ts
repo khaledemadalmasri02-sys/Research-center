@@ -66,6 +66,56 @@ async function postSignup(payload: {
   return res.json();
 }
 
+async function postSignupOtpSend(username: string, email: string) {
+  const res = await fetchWithTimeout("/api/auth/signup/otp/send", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, email }),
+  });
+  const body = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) throw new Error(body.error ?? "Could not send code");
+  return body as { ok: boolean; sent?: boolean; emailMasked?: string };
+}
+
+async function postLoginOtpSend(username: string, loginToken: string) {
+  const res = await fetchWithTimeout("/api/auth/login/otp/send", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, loginToken }),
+  });
+  const body = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) throw new Error(body.error ?? "Could not send code");
+  return body as { ok: boolean; sent?: boolean; emailMasked?: string };
+}
+
+async function postSignupOtpVerify(username: string, email: string, code: string) {
+  const res = await fetchWithTimeout("/api/auth/signup/otp/verify", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, email, code }),
+  });
+  const body = (await res.json().catch(() => ({}))) as any;
+  if (!res.ok) throw new Error(body.error ?? "Verification failed");
+  return body as { ok: boolean; verified: boolean };
+}
+
+async function postLoginOtpVerify(username: string, loginToken: string, code: string) {
+  const res = await fetchWithTimeout("/api/auth/login/otp/verify", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, loginToken, code }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any).error ?? "Verification failed");
+  }
+  return res.json();
+}
+
 export function useAuth() {
   const qc = useQueryClient();
 
@@ -92,6 +142,34 @@ export function useAuth() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["auth-me"] }),
   });
 
+  const sendSignupOtpMutation = useMutation({
+    mutationFn: ({ username, email }: { username: string; email: string }) =>
+      postSignupOtpSend(username, email),
+  });
+
+  const verifySignupOtpMutation = useMutation({
+    mutationFn: ({ username, email, code }: { username: string; email: string; code: string }) =>
+      postSignupOtpVerify(username, email, code),
+  });
+
+  const sendLoginOtpMutation = useMutation({
+    mutationFn: ({ username, loginToken }: { username: string; loginToken: string }) =>
+      postLoginOtpSend(username, loginToken),
+  });
+
+  const verifyLoginOtpMutation = useMutation({
+    mutationFn: ({
+      username,
+      loginToken,
+      code,
+    }: {
+      username: string;
+      loginToken: string;
+      code: string;
+    }) => postLoginOtpVerify(username, loginToken, code),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth-me"] }),
+  });
+
   return {
     isLoading,
     authenticated: data?.authenticated ?? false,
@@ -106,5 +184,18 @@ export function useAuth() {
     signup: signupMutation.mutateAsync,
     signupError: signupMutation.error?.message ?? null,
     isSigningUp: signupMutation.isPending,
+    sendSignupOtp: sendSignupOtpMutation.mutateAsync,
+    sendSignupOtpError: sendSignupOtpMutation.error?.message ?? null,
+    isSendingSignupOtp: sendSignupOtpMutation.isPending,
+    verifySignupOtp: verifySignupOtpMutation.mutateAsync,
+    verifySignupOtpError: verifySignupOtpMutation.error?.message ?? null,
+    isVerifyingSignupOtp: verifySignupOtpMutation.isPending,
+    // Login 2FA (OTP sent to the account email)
+    sendLoginOtp: sendLoginOtpMutation.mutateAsync,
+    sendLoginOtpError: sendLoginOtpMutation.error?.message ?? null,
+    isSendingLoginOtp: sendLoginOtpMutation.isPending,
+    verifyLoginOtp: verifyLoginOtpMutation.mutateAsync,
+    verifyLoginOtpError: verifyLoginOtpMutation.error?.message ?? null,
+    isVerifyingLoginOtp: verifyLoginOtpMutation.isPending,
   };
 }

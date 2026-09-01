@@ -62,3 +62,13 @@ database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
 # Custom domain: Cloudflare auto-provisions the `www` DNS record + TLS cert.
 # (Not supported by wrangler 4.123 config; the `www` route below is used instead.)
 
+# ---- Email (Cloudflare Email Service) --------------------------------------
+# Sending: enable with `wrangler email sending enable research-center.fit`, then
+#   send from support@research-center.fit via the api-server REST call
+#   (CF_EMAIL_TOKEN). No SMTP server required.
+# Receiving: enable Email Routing (`wrangler email routing enable`) and add a
+#   Routing Rule that sends *@research-center.fit to this Worker. The Worker's
+#   email() handler parses the message and POSTs it to the api-server
+#   /api/inbound-email (authenticated with the INBOUND_EMAIL_SECRET secret).
+# Replies are sent later from the api-server via sendEmail() (support@...).
+

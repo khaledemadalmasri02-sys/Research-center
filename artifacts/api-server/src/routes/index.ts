@@ -19,6 +19,7 @@ import metricsRouter from "./metrics";
 import backupRouter from "./backup";
 import analysisRouter from "./analysis";
 import tourConfigRouter from "./tour-config";
+import inboundEmailRouter from "./inbound-email";
 import { requireAdmin } from "../middlewares/requireAdmin";
 import { authenticateApiToken } from "../lib/apiToken";
 
@@ -54,5 +55,8 @@ router.use(requireAuth, analysisRouter);
 router.use(tourConfigRouter);
 router.use(requireAuth, metricsRouter);
 router.use(requireAuth, backupRouter);
+// Inbound email from Cloudflare Email Routing is authenticated by a shared
+// secret (not a session), so it is mounted outside the requireAuth gates.
+router.use("/inbound-email", inboundEmailRouter);
 
 export default router;

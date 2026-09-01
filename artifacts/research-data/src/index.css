@@ -71,6 +71,11 @@
   --button-outline: rgba(0,0,0, .10);
   --badge-outline: rgba(0,0,0, .05);
 
+  /* Accent derived from the active theme preset (set by ThemePresetProvider).
+     Defaults match the "Amethyst" preset so chrome looks right before hydration. */
+  --accent-brand: #a855f7;
+  --accent-soft: rgba(168, 85, 247, 0.18);
+  --accent-soft-strong: rgba(168, 85, 247, 0.34);
   /* Automatic computation of border around primary / danger buttons */
   --opaque-button-border-intensity: -8; /* In terms of percentages */
 
@@ -376,5 +381,228 @@
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+/* ==========================================================================
+   Glass surface tokens + utility
+   Shared by the desktop dock, app-launcher and glass windows. Derived from the
+   spec: semi-transparent dark tint, heavy blur, hairline border, large radius
+   and a soft drop shadow with an inner top highlight. The accent tint is left to
+   the existing --accent-soft / --accent-soft-strong / --accent-brand tokens so
+   it follows the active theme preset.
+   ========================================================================== */
+:root {
+  --glass-bg: rgba(18, 18, 22, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-blur: 26px;
+  --glass-radius: 24px;
+  --glass-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-hairline: rgba(255, 255, 255, 0.10);
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(140%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--glass-radius);
+  box-shadow: var(--glass-shadow), var(--glass-inner);
+}
+
+/* Thin titlebar strip: traffic-light dots + 1px hairline divider below them. */
+.glass-titlebar {
+  border-bottom: 1px solid var(--glass-hairline);
+}
+
+/* Muted default icon rail state; brightens on hover/active. */
+.rail-icon {
+  color: rgba(255, 255, 255, 0.55);
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.rail-icon:hover {
+  color: rgba(255, 255, 255, 0.95);
+}
+/* Active/open app gets the accent-tinted highlight pill. */
+.rail-icon-active {
+  color: #ffffff;
+  background-color: var(--accent-soft);
+}
+
+/* Theme-preset accent tints for desktop chrome (dock + launcher tiles).
+   Driven by --accent-soft / --accent-soft-strong set by ThemePresetProvider. */
+.dock-app-btn {
+  background-color: var(--accent-soft);
+  transition: background-color 0.15s ease;
+}
+.dock-app-btn:hover {
+  background-color: var(--accent-soft-strong);
+}
+.launch-tile {
+  background-color: var(--accent-soft);
+  transition: background-color 0.15s ease;
+}
+.launch-tile:hover {
+  background-color: var(--accent-soft-strong);
+}
+/* ==========================================================================
+   Authentication screen — premium dark / green theme
+   Scoped entirely under .auth-shell so it never leaks into the rest of the
+   app or fight with the theme-preset tokens.
+   ========================================================================== */
+.auth-shell {
+  --auth-bg: #06090a;
+  --auth-crimson: 152 76% 41%;
+  --auth-crimson-soft: 152 72% 52%;
+  --auth-panel: 0 0% 100%;
+
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+  background-color: var(--auth-bg);
+  color: #f6f5f7;
+  background-image:
+    radial-gradient(80% 60% at 12% 8%, hsl(var(--auth-crimson) / 0.16) 0%, transparent 60%),
+    radial-gradient(70% 70% at 88% 92%, hsl(var(--auth-crimson) / 0.13) 0%, transparent 62%),
+    linear-gradient(160deg, #08100f 0%, #06090a 55%, #050a08 100%);
+}
+
+/* Very subtle noise/vignette so large flat areas do not band on wide screens */
+.auth-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(120% 120% at 50% 50%, transparent 55%, rgb(0 0 0 / 0.55) 100%);
+}
+
+/* Decorative ambient orbs (kept low-opacity + blurred, never neon) */
+.auth-orb {
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  pointer-events: none;
+  filter: blur(90px);
+  background: hsl(var(--auth-crimson) / 0.22);
+}
+
+@keyframes auth-orb-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(2.5rem, -1.75rem, 0) scale(1.08); }
+  100% { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.auth-orb-animate {
+  animation: auth-orb-drift 22s ease-in-out infinite;
+  will-change: transform;
+}
+
+/* Glass card ------------------------------------------------------------- */
+.auth-card {
+  position: relative;
+  border-radius: 1.5rem;
+  border: 1px solid hsl(var(--auth-panel) / 0.09);
+  background:
+    linear-gradient(180deg, hsl(var(--auth-panel) / 0.055) 0%, hsl(var(--auth-panel) / 0.02) 100%),
+    rgb(10 8 12 / 0.72);
+  backdrop-filter: blur(18px) saturate(130%);
+  -webkit-backdrop-filter: blur(18px) saturate(130%);
+  box-shadow:
+    0 1px 0 0 hsl(var(--auth-panel) / 0.06) inset,
+    0 30px 80px -20px rgb(0 0 0 / 0.85),
+    0 0 90px -50px hsl(var(--auth-crimson) / 0.55);
+}
+
+/* Welcome / marketing panel */
+.auth-welcome {
+  background:
+    radial-gradient(100% 100% at 20% 0%, hsl(var(--auth-crimson-soft) / 0.30) 0%, transparent 55%),
+    linear-gradient(145deg, hsl(var(--auth-crimson) / 0.55) 0%, hsl(160 60% 18%) 48%, #06120c 100%);
+}
+
+/* Inputs ----------------------------------------------------------------- */
+.auth-field {
+  color: #f6f5f7;
+  background-color: hsl(var(--auth-panel) / 0.04);
+  border-color: hsl(var(--auth-panel) / 0.12);
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+.auth-field::placeholder {
+  color: hsl(var(--auth-panel) / 0.36);
+}
+.auth-field:hover:not(:disabled):not(:focus) {
+  border-color: hsl(var(--auth-panel) / 0.22);
+  background-color: hsl(var(--auth-panel) / 0.06);
+}
+.auth-field:focus-visible,
+.auth-field:focus {
+  outline: none;
+  border-color: hsl(var(--auth-crimson-soft) / 0.85);
+  background-color: hsl(var(--auth-panel) / 0.07);
+  box-shadow: 0 0 0 3px hsl(var(--auth-crimson) / 0.22);
+}
+.auth-field[aria-invalid="true"] {
+  border-color: hsl(var(--auth-crimson-soft) / 0.9);
+}
+.auth-field[aria-invalid="true"]:focus-visible {
+  box-shadow: 0 0 0 3px hsl(var(--auth-crimson) / 0.3);
+}
+
+/* Primary button --------------------------------------------------------- */
+.auth-submit {
+  background-image: linear-gradient(180deg, hsl(var(--auth-crimson-soft)) 0%, hsl(var(--auth-crimson)) 100%);
+  color: #fff;
+  border: 1px solid hsl(var(--auth-crimson-soft) / 0.7);
+  box-shadow:
+    0 1px 0 0 hsl(var(--auth-panel) / 0.22) inset,
+    0 10px 26px -12px hsl(var(--auth-crimson) / 0.9);
+  transition: transform 140ms ease, box-shadow 180ms ease, filter 180ms ease;
+}
+.auth-submit:hover:not(:disabled) {
+  filter: brightness(1.07);
+  box-shadow:
+    0 1px 0 0 hsl(var(--auth-panel) / 0.22) inset,
+    0 14px 34px -12px hsl(var(--auth-crimson) / 1);
+}
+.auth-submit:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+.auth-submit:disabled {
+  filter: saturate(0.55) brightness(0.8);
+  box-shadow: none;
+}
+
+/* Ghost / outline button used inside the welcome panel */
+.auth-ghost {
+  color: #fff;
+  border: 1px solid hsl(var(--auth-panel) / 0.55);
+  background-color: hsl(var(--auth-panel) / 0.03);
+  transition: background-color 160ms ease, border-color 160ms ease, transform 140ms ease;
+}
+.auth-ghost:hover:not(:disabled) {
+  background-color: hsl(var(--auth-panel) / 0.14);
+  border-color: hsl(var(--auth-panel) / 0.8);
+}
+.auth-ghost:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
+}
+
+/* Shared visible focus ring for every interactive element on the screen */
+.auth-shell :is(a, button, input, [tabindex]):focus-visible {
+  outline: 2px solid hsl(var(--auth-crimson-soft));
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-orb-animate {
+    animation: none;
   }
 }

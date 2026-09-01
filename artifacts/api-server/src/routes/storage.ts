@@ -10,6 +10,7 @@ import { Readable } from "stream";
 import { db, patientsTable, pool } from "@workspace/db";
 import { eq, sql } from "drizzle-orm";
 import { radiologyImageService } from "../lib/radiologyImages";
+import { ensureUserPatientsDefinition } from "../lib/patientsCollection";
 import { logger } from "../lib/logger";
 import { requireAuth } from "./auth";
 import { safeFetch } from "../lib/ssrf";
@@ -117,21 +118,11 @@ async function streamObject(res: Response, bucket: string, key: string): Promise
  * collection (record) so it shows up under the collection feature, not only on
  * the legacy patients.radiology_images column. Idempotent on (recordId, objectKey).
  */
-async function attachToActiveCollection(patientIdText: string, objectKey: string): Promise<void> {
+async function attachToActiveCollection(patientIdText: string, objectKey: string, userId: number): Promise<void> {
   if (!patientIdText) return;
   try {
-    const active = await pool.query(
-      `SELECT "id" FROM "record_definitions" WHERE "shared" = true AND "isActive" = true LIMIT 1`,
-    );
-    let defId: number | undefined = active.rows[0]?.id;
-    if (!defId) {
-      const fallback = await pool.query(
-        `SELECT "id" FROM "record_definitions" WHERE "name" = 'Patients' AND "shared" = true LIMIT 1`,
-      );
-      defId = fallback.rows[0]?.id;
-    }
-    if (!defId) return;
-
+    // Attach to the current user's own "Patients" collection (private per user).
+    const defId = await ensureUserPatientsDefinition(userId);
     const normalized = patientIdText.replace(/^PAT/i, "");
     const rec = await pool.query(
       `SELECT "id" FROM "records"
@@ -604,7 +595,7 @@ async function updatePatientImages(req: Request, patient: any, objectKey: string
 
     // Also attach to the active "Patients" collection so the image is visible
     // under the collection feature, not only on the legacy patients column.
-    await attachToActiveCollection(patient.patientId, objectKey);
+    await attachToActiveCollection(patient.patientId, objectKey, req.session?.userId ?? 0);
 
     result.patientId = patient.patientId;
     result.previewsCount = images.length;

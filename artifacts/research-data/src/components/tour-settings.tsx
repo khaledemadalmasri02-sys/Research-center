@@ -139,7 +139,7 @@ export function TourSettings() {
 
         <p className="text-xs text-muted-foreground">
           Choose whether the tour plays the generated animated explainer or a real screen recording for each step.
-          Upload a screen recording per step below, then set its source to “Screen recording”.
+          Upload a screen recording per step below, then set its source to 'Screen recording'.
         </p>
 
         <div className="border rounded-md divide-y">

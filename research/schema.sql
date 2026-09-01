@@ -43,6 +43,22 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE INDEX IF NOT EXISTS idx_sessions_expire ON sessions(expire);
 
+-- Email unsubscribes (RFC 8058 List-Unsubscribe-Post one-click).
+-- A row per (email, category) lets a user opt out of OTP mail while still
+-- receiving admin notifications, etc. category='all' means every category.
+CREATE TABLE IF NOT EXISTS email_unsubscribes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  email TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'all',
+  source TEXT,
+  user_agent TEXT,
+  ip TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (email, category)
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_unsubscribes_email ON email_unsubscribes (email);
+
 -- Feedback submissions (mirrors the Postgres `feedback` table)
 CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

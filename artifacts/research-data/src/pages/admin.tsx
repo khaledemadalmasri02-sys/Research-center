@@ -96,13 +96,17 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 }
 
 export default function Admin() {
-  const { canAdminAccess } = useAuth();
+  const { isLoading, canAdminAccess } = useAuth();
   const [, navigate] = useLocation();
   const qc = useQueryClient();
 
   useEffect(() => {
-    if (!canAdminAccess) navigate("/");
-  }, [canAdminAccess, navigate]);
+    // Only bounce when auth has actually resolved and access is denied.
+    // Guarding on !isLoading prevents a redirect while /api/auth/me is still
+    // in flight (canAdminAccess is false during loading), which would bounce
+    // legitimate admins away from the page on first load / hard refresh.
+    if (!isLoading && !canAdminAccess) navigate("/");
+  }, [isLoading, canAdminAccess, navigate]);
 
   const signups = useSignups();
   const users = useUsers();
@@ -189,6 +193,13 @@ export default function Admin() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin-feedback"] }),
   });
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
   if (!canAdminAccess) return null;
 
   return (
@@ -473,10 +484,6 @@ export default function Admin() {
               </CardContent>
             </Card>
           </TabsContent>
-          <TabsContent value="tour">
-            <TourSettings />
-           </TabsContent>
-
           <TabsContent value="tour">
             <TourSettings />
           </TabsContent>

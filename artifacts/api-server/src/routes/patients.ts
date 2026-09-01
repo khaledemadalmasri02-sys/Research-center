@@ -1,6 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { and, eq, ilike, or, sql, desc } from "drizzle-orm";
-import { db, patientsTable, recordDefinitionsTable, recordsTable } from "@workspace/db";
+import { db, patientsTable } from "@workspace/db";
 import {
   ListPatientsQueryParams,
   ListPatientsResponse,
@@ -190,7 +190,8 @@ router.get("/patients", async (req, res): Promise<void> => {
 
   const { search, sex, collectionType, limit = 100, offset = 0 } = parsed.data;
 
-  const conditions = [];
+  // Patients are private: each user only sees the ones they own.
+  const conditions = [eq(patientsTable.userId, req.session?.userId ?? 0)];
 
   if (search) {
     conditions.push(
@@ -200,7 +201,7 @@ router.get("/patients", async (req, res): Promise<void> => {
         ilike(patientsTable.chiefComplaint, `%${search}%`),
         ilike(patientsTable.provisionalDiagnosis, `%${search}%`),
         ilike(patientsTable.finalConfirmedDiagnosis, `%${search}%`)
-      )
+      )!
     );
   }
   if (sex) conditions.push(eq(patientsTable.sex, sex));
@@ -209,7 +210,7 @@ router.get("/patients", async (req, res): Promise<void> => {
   const patients = await db
     .select()
     .from(patientsTable)
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .where(and(...conditions))
     .orderBy(desc(patientsTable.createdAt))
     .limit(limit ?? 100)
     .offset(offset ?? 0);
@@ -217,6 +218,7 @@ router.get("/patients", async (req, res): Promise<void> => {
   const total = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(patientsTable)
+    .where(eq(patientsTable.userId, req.session?.userId ?? 0))
     .then((r) => r[0]?.count ?? 0);
 
   res.json(ListPatientsResponse.parse({ patients: await Promise.all(patients.map(serializePatientWithImages)), total }));
@@ -230,7 +232,10 @@ router.post("/patients", async (req, res): Promise<void> => {
     return;
   }
 
-  const [patient] = await db.insert(patientsTable).values(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data).returning();
+  const [patient] = await db
+    .insert(patientsTable)
+    .values({ ...(sanitize(parsed.data as Record<string, unknown>) as Record<string, unknown>), userId: req.session?.userId ?? 0 } as any)
+    .returning();
 
   await writeAudit({
     userId: req.session?.userId ?? null,
@@ -243,19 +248,12 @@ router.post("/patients", async (req, res): Promise<void> => {
   res.status(201).json(GetPatientResponse.parse(await serializePatientWithImages(patient!)));
 });
 
-router.get("/patients/stats", async (_req, res): Promise<void> => {
-  let allPatients: any[];
-  const [pdef] = await db
-    .select({ id: recordDefinitionsTable.id })
-    .from(recordDefinitionsTable)
-    .where(and(eq(recordDefinitionsTable.name, "Patients"), eq(recordDefinitionsTable.shared, true)))
-    .limit(1);
-  if (pdef) {
-    const recs = await db.select().from(recordsTable).where(eq(recordsTable.definitionId, pdef.id));
-    allPatients = recs.map((r) => ({ ...(r.data as Record<string, unknown>), createdAt: r.createdAt }));
-  } else {
-    allPatients = await db.select().from(patientsTable);
-  }
+router.get("/patients/stats", async (req, res): Promise<void> => {
+  // Patients are private: stats reflect only the current user's patients.
+  const allPatients: any[] = await db
+    .select()
+    .from(patientsTable)
+    .where(eq(patientsTable.userId, req.session?.userId ?? 0));
 
   const total = allPatients.length;
   const maleCount = allPatients.filter((p) => p.sex === "Male").length;
@@ -332,7 +330,7 @@ router.get("/patients/:id", async (req, res): Promise<void> => {
   const [patient] = await db
     .select()
     .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
+    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
   if (!patient) {
     res.status(404).json({ error: "Patient not found" });
@@ -376,7 +374,7 @@ router.get("/patients/:id/images", async (req, res): Promise<void> => {
   const [patient] = await db
     .select()
     .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
+    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
   if (!patient) {
     res.status(404).json({ error: "Patient not found" });
@@ -397,7 +395,7 @@ router.post("/patients/:id/images", async (req, res): Promise<void> => {
   const [patient] = await db
     .select()
     .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
+    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
   if (!patient) {
     res.status(404).json({ error: "Patient not found" });
@@ -457,7 +455,7 @@ router.delete("/patients/:id/images/:imageId", async (req, res): Promise<void> =
   const [patient] = await db
     .select()
     .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
+    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
   if (!patient) {
     res.status(404).json({ error: "Patient not found" });
@@ -499,11 +497,13 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
   const updateData: Record<string, any> = Object.fromEntries(
     Object.entries(sanitize(parsed.data as Record<string, unknown>)).filter(([, v]) => v !== null)
   );
+  // Never allow the owner (userId) to be changed via an update payload.
+  delete updateData.userId;
 
   const [patient] = await db
     .update(patientsTable)
     .set(updateData)
-    .where(eq(patientsTable.id, params.data.id))
+    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)))
     .returning();
 
   if (!patient) {
@@ -534,7 +534,7 @@ router.post("/patients/batch-import-images", async (req: Request, res: Response)
     const [patient] = await db
       .select()
       .from(patientsTable)
-      .where(eq(patientsTable.patientId, patientId));
+      .where(and(eq(patientsTable.patientId, patientId), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
     if (!patient) {
       res.status(404).json({ error: `Patient with ID ${patientId} not found` });
@@ -597,7 +597,7 @@ router.delete("/patients/:id", async (req, res: Response): Promise<void> => {
 
   const [patient] = await db
     .delete(patientsTable)
-    .where(eq(patientsTable.id, params.data.id))
+    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)))
     .returning();
 
   if (!patient) {
@@ -709,7 +709,13 @@ router.post("/patients/batch", async (req: Request, res: Response): Promise<void
         if (!parsed.success) {
           result.errors = [parsed.error.message];
         } else {
-          const [patient] = await db.insert(patientsTable).values(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data).returning();
+  const [patient] = await db
+    .insert(patientsTable)
+    .values({
+      ...(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data),
+      userId: req.session?.userId ?? null,
+    })
+    .returning();
           result.id = patient!.id;
           if (updatedPaths.length > 0) {
             result.updatedImagePaths = updatedPaths;
