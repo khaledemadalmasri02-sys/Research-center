@@ -27,8 +27,6 @@
 # ============================================================================
 minimumReleaseAge: 1440
 
-minimumReleaseAgeExclude:
-
 packages:
   - artifacts/*
   - lib/*
@@ -67,8 +65,11 @@ autoInstallPeers: false
 
 onlyBuiltDependencies:
   - '@swc/core'
+  - cpu-features
   - esbuild
   - msw
+  - protobufjs
+  - ssh2
   - unrs-resolver
 
 overrides:
@@ -158,6 +159,9 @@ overrides:
 
 allowBuilds:
   core-js: true
+  cpu-features: set this to true or false
   esbuild: false
+  protobufjs: set this to true or false
   sharp: true
+  ssh2: set this to true or false
   workerd: true

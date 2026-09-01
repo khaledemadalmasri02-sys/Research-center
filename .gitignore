@@ -66,6 +66,10 @@ research/.dev.vars
 research/.wrangler/
 artifacts/**/*.wrangler/
 
+# Vitest coverage output — generated, not source
+artifacts/*/coverage/
+**/coverage/
+
 # Build artefacts (rebuilt on every deploy)
 /research/public/assets/*.js
 /research/public/assets/*.css

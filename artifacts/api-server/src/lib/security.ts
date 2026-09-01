@@ -71,3 +71,8 @@ export function rateLimit(
 
   return { success: true, retryAfterSec: 0 };
 }
+
+/** Test-only: clear the in-memory rate-limit buckets. */
+export function __resetRateLimits(): void {
+  buckets.clear();
+}
