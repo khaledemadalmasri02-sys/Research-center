@@ -70,6 +70,10 @@ artifacts/**/*.wrangler/
 artifacts/*/coverage/
 **/coverage/
 
+# Kilo CLI state — local to each developer
+/.kilo/
+.kilo/agent/PLAN.md
+
 # Build artefacts (rebuilt on every deploy)
 /research/public/assets/*.js
 /research/public/assets/*.css

@@ -11,15 +11,22 @@ import { afterAll, afterEach, beforeAll } from "vitest";
  * It wires up beforeAll (imports the api-server modules + creates schema),
  * afterEach (truncates all tables), and afterAll (closes the pool).
  *
- * Returning the per-file test API keeps the boilerplate out of the call site.
+ * The pool is shared across all withDb() instances in a single test file so
+ * that running multiple `describe` blocks (each with its own withDb) doesn't
+ * close the pool under subsequent fixtures. The global-setup teardown owns
+ * the final close.
  */
 export function withDb() {
+  // Module-scoped singletons: re-import only once per test file.
   let app: typeof import("../../src/app").default | null = null;
   let pool: typeof import("@workspace/db").pool | null = null;
   let dbBootstrap: typeof import("../../src/lib/db-bootstrap") | null = null;
   let security: typeof import("../../src/lib/security") | null = null;
+  let bootstrapped = false;
+  let poolClosed = false;
 
   beforeAll(async () => {
+    if (bootstrapped) return;
     // Lazy import: these modules read DATABASE_URL at import time, and we
     // need global-setup.ts to have set it first.
     const appMod = await import("../../src/app");
@@ -34,6 +41,7 @@ export function withDb() {
     // Ensure schema once per test file. The globalSetup already started the
     // container; we just create the tables on first use.
     await dbBootstrap.ensureAllTables();
+    bootstrapped = true;
   });
 
   afterEach(async () => {
@@ -75,8 +83,11 @@ export function withDb() {
   });
 
   afterAll(async () => {
-    if (!pool) return;
-    await pool.end().catch(() => undefined);
+    if (!pool || poolClosed) return;
+    poolClosed = true;
+    // We do NOT close the pool here — global-setup owns the lifecycle and
+    // closing here would break later describe blocks in the same file that
+    // also call withDb().
   });
 
   return {

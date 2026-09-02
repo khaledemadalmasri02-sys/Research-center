@@ -30,11 +30,12 @@ export default defineConfig({
         "src/routes/auth.ts",
       ],
       thresholds: {
-        // Per-PR starting point. ratchet per sprint.
-        statements: 15,
-        branches: 80,
-        functions: 30,
-        lines: 15,
+        // Ratcheted after slice 2 (signup + OTP + 2FA + me = 18 more tests).
+        // Bump per slice as we add storage + analysis coverage.
+        statements: 75,
+        branches: 70,
+        functions: 75,
+        lines: 75,
       },
     },
   },
