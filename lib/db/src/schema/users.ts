@@ -29,6 +29,11 @@ export const signupRequestsTable = pgTable("signup_requests", {
   status: text("status").notNull().default("pending"), // 'pending' | 'approved' | 'rejected'
   reviewedBy: integer("reviewed_by"),
   reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  // Email verification (signup OTP).
+  emailVerified: boolean("email_verified").notNull().default(false),
+  otpCodeHash: text("otp_code_hash"),
+  otpExpiresAt: timestamp("otp_expires_at", { withTimezone: true }),
+  otpAttempts: integer("otp_attempts").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow().$onUpdate(() => new Date()),
 });

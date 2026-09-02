@@ -42,6 +42,8 @@ jobs:
           cache: pnpm
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
+      - name: Build @workspace/db (declarations)
+        run: pnpm -F @workspace/db exec tsc -p tsconfig.json
       - name: Typecheck
         run: pnpm -F @workspace/api-server typecheck
       - name: Test (with coverage)

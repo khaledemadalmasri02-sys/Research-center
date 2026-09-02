@@ -7,9 +7,10 @@ import { radiologyImageService } from "./lib/radiologyImages";
 import { ensureUserPatientsDefinition } from "./lib/patientsCollection";
 import {
   ensureSessionTable,
-  ensureAuthTables,
+  ensureUsersLegacyBackfills,
   ensureTourConfigTable,
   ensureInboundEmailTable,
+  runAllMigrations,
 } from "./lib/db-bootstrap";
 
 // The "Patients" collection is now a per-user record definition (see
@@ -88,9 +89,10 @@ async function ensureBucket() {
   }
 }
 
-ensureSessionTable()
-  .then(() => ensureAuthTables())
-    .then(() => seedInitialAdmin().catch((err) => logger.warn({ err }, "initial admin seed failed")))
+runAllMigrations()
+  .then(() => ensureSessionTable())
+    .then(() => ensureUsersLegacyBackfills())
+  .then(() => seedInitialAdmin().catch((err) => logger.warn({ err }, "initial admin seed failed")))
   .then(() => ensureInitialAdminPatientsCollection().catch((err) => logger.warn({ err }, "patients collection seed failed")))
   .then(() => backfillPatientsOwner().catch((err) => logger.warn({ err }, "patients owner backfill failed")))
   .then(() => radiologyImageService.ensureTable().catch((err) => logger.warn({ err }, "radiology_images table ensure failed")))

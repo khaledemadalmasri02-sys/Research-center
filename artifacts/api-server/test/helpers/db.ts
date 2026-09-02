@@ -38,6 +38,19 @@ export function withDb() {
     dbBootstrap = bootstrap;
     security = sec;
 
+    // Add a test-only error logger that prints the inner error so we can
+    // see 500 root causes during `pnpm test`. In production, Express's
+    // default error handler hides them.
+    app.use(
+      (err: Error, _req: unknown, res: { statusCode?: number; status?: (n: number) => unknown; headersSent?: boolean }, _next: unknown) => {
+        // eslint-disable-next-line no-console
+        console.error("[test-error]", err?.stack ?? err);
+        if (!res.headersSent) {
+          (res as { status: (n: number) => unknown }).status(500);
+        }
+      },
+    );
+
     // Ensure schema once per test file. The globalSetup already started the
     // container; we just create the tables on first use.
     await dbBootstrap.ensureAllTables();
