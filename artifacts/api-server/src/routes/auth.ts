@@ -6,7 +6,24 @@ import { hashPassword, hashLoginToken, verifyPassword, isValidPassword, rateLimi
 import { writeAudit } from "../lib/audit";
 import { sendEmail } from "../lib/email";
 
-const OTP_LENGTH = 4;
+// ---- OTP settings (P1.4) ---------------------------------------------------
+// Default 6 digits. NIST 800-63B recommends ≥6 digits for one-time
+// authentication codes; 4 digits (10 000 codes) with 5 attempts and a
+// 5-minute TTL gives an attacker a 0.05% chance per session which is
+// borderline acceptable but not for medical data. 6 digits (1 000 000
+// codes) drops that to 0.0005% per session.
+//
+// Overridable via the OTP_LENGTH env var (range 4-8). Don't set this
+// below 6 in production without a documented threat-model exception.
+//
+// Threat model and brute-force math live in SECURITY.md.
+export const OTP_LENGTH = (() => {
+  const v = parseInt(process.env.OTP_LENGTH ?? "6", 10);
+  if (Number.isNaN(v) || v < 4 || v > 8) {
+    return 6;
+  }
+  return v;
+})();
 const LOGIN_OTP_TTL_MS = 5 * 60 * 1000; // 5 minutes to complete 2FA
 
 const router: IRouter = Router();
@@ -119,7 +136,7 @@ router.post("/auth/login", async (req: Request, res: Response) => {
     to: user.email,
     subject: "Your MedResearch login code",
     text:
-      `Your 4-digit login code is: ${code}\n` +
+      `Your ${OTP_LENGTH}-digit login code is: ${code}\n` +
       `It expires in 10 minutes.\n\n` +
       `If you did not request this, please secure your account immediately by changing your password.\n\n` +
       `— MedResearch\n` +
@@ -285,7 +302,7 @@ router.post("/auth/signup/otp/send", async (req: Request, res: Response) => {
     subject: "Your MedResearch verification code",
     text:
       `Welcome to MedResearch!\n\n` +
-      `Your 4-digit verification code is: ${code}\n` +
+      `Your ${OTP_LENGTH}-digit verification code is: ${code}\n` +
       `It expires in 10 minutes.\n\n` +
       `If you did not request this, you can ignore this email.\n\n` +
       `— MedResearch\n` +
@@ -424,7 +441,7 @@ router.post("/auth/login/otp/send", async (req: Request, res: Response) => {
     to: user.email,
     subject: "Your MedResearch login code",
     text:
-      `Your 4-digit login code is: ${code}\n` +
+      `Your ${OTP_LENGTH}-digit login code is: ${code}\n` +
       `It expires in 10 minutes.\n\n` +
       `If you did not request this, please secure your account immediately by changing your password.\n\n` +
       `— MedResearch\n` +

@@ -34,9 +34,32 @@ This repository powers a **medical research data platform**. The following are e
 
 ## Threat-model notes
 
-- **4-digit OTP**: accepted because of 5-attempt lockout and 5-minute expiry (see `routes/auth.ts`). If you raise the lockout threshold, raise `OTP_LENGTH` to 6.
-- **CORS**: api-server defaults to a closed allowlist (`ALLOWED_ORIGINS` must be set). The previous "reflect any origin" fallback is removed.
-- **Object keys**: prefixed by patient/record ID; never accept free-form keys that could collide across patients.
+- **OTP length (P1.4):** default is **6 digits** (1 000 000 codes) with
+  a 5-attempt lockout and a 5-minute TTL. Brute-force probability per
+  session: 5 / 1 000 000 = **0.0005%** for login 2FA; the same math
+  applies to signup email verification (10-minute TTL, 5 attempts).
+  Override via `OTP_LENGTH` env (range 4-8). Don't set this below 6
+  in production without a documented threat-model exception.
+
+  For reference, the previous 4-digit default gave 5 / 10 000 = 0.05%
+  per session — borderline acceptable for low-risk flows but
+  insufficient for medical data, which is why 6 digits is the new
+  default. NIST 800-63B recommends ≥6 digits for one-time
+  authentication codes.
+
+- **CORS**: api-server defaults to a closed allowlist
+  (`ALLOWED_ORIGINS` must be set). The previous "reflect any origin"
+  fallback is removed.
+- **Object keys**: prefixed by patient/record ID; never accept
+  free-form keys that could collide across patients.
+- **Body size**: JSON capped at 1 MB (overridable via
+  `JSON_BODY_LIMIT`); large uploads go through multer with per-IP
+  rate limits.
+- **Per-IP rate limits**: login 10/15min, signup 10/15min, OTP
+  send 8/15min, login-OTP verify 8/15min, presigned URL request
+  60/15min, upload-file 30/15min, image import 30/15min, dataset
+  upload 20/15min, analyze 30/15min, from-query 30/15min. All return
+  429 with a `Retry-After` header.
 
 ## Dependencies
 

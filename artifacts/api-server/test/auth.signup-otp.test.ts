@@ -12,9 +12,11 @@ vi.mock("../src/lib/email", () => ({
   }),
 }));
 
-/** Extract the 4-digit login OTP from the email text body. */
+/** Extract the OTP code from the email text body. The api-server's
+ * OTP_LENGTH is 4 in dev defaults but 6 in production (P1.4); the regex
+ * matches any length between 4 and 8. */
 function extractOtp(text: string): string {
-  const m = text.match(/code is:\s*(\d{4})/i);
+  const m = text.match(/code is:\s*(\d{4,8})/i);
   if (!m) throw new Error(`OTP not found in email: ${text.slice(0, 200)}`);
   return m[1];
 }
@@ -238,7 +240,7 @@ describe("auth.login 2FA flow (P0.3 — slice 2)", () => {
       "el@example.com",
     );
     expect(typeof otp).toBe("string");
-    expect(otp).toMatch(/^\d{4}$/);
+    expect(otp).toMatch(/^\d{4,8}$/);
     expect(typeof loginToken).toBe("string");
     expect(loginToken).toMatch(/^[0-9a-f]{64}$/);
     // Email is masked before sending the response.
@@ -378,7 +380,7 @@ describe("auth.login 2FA flow (P0.3 — slice 2)", () => {
     expect(resend.status).toBe(200);
     expect(sentEmails).toHaveLength(2);
     const newOtp = extractOtp(sentEmails[1].text);
-    expect(newOtp).toMatch(/^\d{4}$/);
+    expect(newOtp).toMatch(/^\d{4,8}$/);
     expect(newOtp).not.toBe(initialOtp);
 
     const { rows: after } = await t.pool.query<{ otp_attempts: number }>(
