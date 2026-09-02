@@ -56,22 +56,77 @@ router.use("/storage/uploads", requireAuth);
 router.use("/storage/images", requireAuth);
 router.use("/storage/ensure-bucket", requireAuth);
 
+// ---- S3 listing helpers (P1.14) -------------------------------------------
+// ListObjectsV2 returns at most 1000 keys per call. We paginate via
+// ContinuationToken so a patient with >1000 images doesn't silently
+// lose the rest. Errors are surfaced to the caller (no more `catch {}`),
+// so the HTTP layer can return 502 / 503 instead of an empty array that
+// looks like "no images".
+const S3_LIST_PAGE_SIZE = 1000;
+const S3_LIST_MAX_PAGES = 100; // hard cap to avoid pathological loops
+
+/**
+ * Validate a user-supplied patient identifier before it goes into an
+ * S3 Prefix. The S3 Prefix is a string filter, not a glob, so a
+ * malicious value like "X_" or "*" can match objects from another
+ * patient (prefix-injection). We only allow digits since patient
+ * IDs in the DB are integer serial columns.
+ */
+function isSafePatientIdForPrefix(value: string): boolean {
+  return /^[0-9]+$/.test(value);
+}
+
+/**
+ * Iterate every object under `prefix` in `bucket`, paginated. Returns
+ * a flat array of object keys. Throws on S3 errors so the caller can
+ * distinguish "no objects" (empty array) from "S3 unavailable"
+ * (thrown). Capped at S3_LIST_MAX_PAGES * S3_LIST_PAGE_SIZE = 100 000
+ * keys per call to defend against runaway buckets.
+ */
+async function listAllObjectsUnderPrefix(
+  bucket: string,
+  prefix: string,
+): Promise<string[]> {
+  const out: string[] = [];
+  let token: string | undefined = undefined;
+  for (let page = 0; page < S3_LIST_MAX_PAGES; page++) {
+    const pageRes: {
+      Contents?: { Key?: string }[];
+      IsTruncated?: boolean;
+      NextContinuationToken?: string;
+    } = await s3Client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: prefix,
+        MaxKeys: S3_LIST_PAGE_SIZE,
+        ContinuationToken: token,
+      }),
+    );
+    for (const obj of pageRes.Contents ?? []) {
+      if (obj.Key) out.push(obj.Key);
+    }
+    if (!pageRes.IsTruncated || !pageRes.NextContinuationToken) break;
+    token = pageRes.NextContinuationToken;
+  }
+  return out;
+}
+
+/**
+ * Find every radiology object whose key starts with
+ * `radiology/patient_<patientId>_`. The patientId is validated as a
+ * digit-only string before being interpolated into the prefix.
+ *
+ * Returns an empty array when the patient has no images. Throws on S3
+ * errors so the route can return a real 5xx instead of a misleading
+ * 200-with-empty-array.
+ */
 async function discoverImagesByPatientId(patientId: string): Promise<string[]> {
   if (!patientId) return [];
-  try {
-    const bucket = objectStorageService.getBucket();
-    const response = await s3Client.send(new ListObjectsV2Command({
-      Bucket: bucket,
-      Prefix: `radiology/patient_${patientId}_`,
-    }));
-    const keys: string[] = [];
-    for (const obj of response.Contents ?? []) {
-      if (obj.Key) keys.push(obj.Key);
-    }
-    return keys;
-  } catch {
-    return [];
+  if (!isSafePatientIdForPrefix(patientId)) {
+    throw new Error("Invalid patient id");
   }
+  const bucket = objectStorageService.getBucket();
+  return listAllObjectsUnderPrefix(bucket, `radiology/patient_${patientId}_`);
 }
 
 function isImageUrl(path: string): boolean {
@@ -444,69 +499,93 @@ router.post("/storage/images/by-patient", async (req: Request, res: Response) =>
 
 router.get("/storage/images/by-patient/:patientId", async (req: Request, res: Response) => {
   const { patientId } = req.params;
+  if (!isSafePatientIdForPrefix(String(patientId))) {
+    res.status(400).json({ error: "Invalid patientId" });
+    return;
+  }
   try {
-    const images = await discoverImagesByPatientId(patientId as string);
+    const images = await discoverImagesByPatientId(String(patientId));
     res.json({ patientId, images });
-  } catch {
+  } catch (error) {
+    req.log.error({ err: error }, "Failed to discover images for patient");
     res.status(500).json({ error: "Failed to discover images" });
   }
 });
 
 router.post("/storage/images/search", async (req: Request, res: Response) => {
   const { identifier, patientId, filename } = req.body as { identifier?: string; patientId?: string; filename?: string };
-  
+
   if (!identifier && !filename) {
     res.status(400).json({ error: "Either 'identifier' or 'filename' is required" });
     return;
   }
-  
+
+  // The `patientId` is the only thing we interpolate into an S3 Prefix
+  // (when provided), so we validate it. `identifier` is a full match
+  // against candidate prefixes (no substring); we don't need to
+  // validate it the same way. `filename` is matched as a suffix
+  // (`.includes`), so it never becomes an S3 Prefix.
+  if (patientId !== undefined && patientId !== "" && !isSafePatientIdForPrefix(String(patientId))) {
+    res.status(400).json({ error: "Invalid patientId" });
+    return;
+  }
+
   try {
     const bucket = objectStorageService.getBucket();
     const keys: string[] = [];
-    
+
     if (identifier) {
+      // Identifier-based lookup. Try a few known layouts; the existing
+      // legacy layout (patient_<id>_) and the newer direct-id layout.
+      // We only list under prefixes that are scoped to `radiology/`,
+      // never the whole bucket.
       const patterns = [
         `radiology/${identifier}_`,
         `radiology/patient_${identifier}_`,
         `radiology/${identifier}.`,
         `radiology/image_${identifier}.`,
       ];
-      
       for (const prefix of patterns) {
-        const response = await s3Client.send(new ListObjectsV2Command({
-          Bucket: bucket,
-          Prefix: prefix,
-        }));
-        for (const obj of response.Contents ?? []) {
-          if (obj.Key && !keys.includes(obj.Key)) {
-            keys.push(obj.Key);
-          }
-        }
+        const found = await listAllObjectsUnderPrefix(bucket, prefix);
+        for (const k of found) if (!keys.includes(k)) keys.push(k);
       }
     }
-    
+
     if (filename) {
+      // Filename is matched as a substring in the **scoped** key set.
+      // If a patientId is provided, restrict the listing to that
+      // patient's prefix; otherwise we refuse the request to avoid
+      // an O(bucket) substring scan. Caller must either provide
+      // patientId (cheap, prefix-scoped) or an identifier (also
+      // prefix-scoped).
+      if (!patientId && !identifier) {
+        res.status(400).json({
+          error:
+            "filename lookup requires patientId or identifier to avoid scanning the entire bucket",
+        });
+        return;
+      }
+      const prefix = patientId
+        ? `radiology/patient_${patientId}_`
+        : `radiology/${identifier}_`;
       const searchKey = filename.toLowerCase();
-      const response = await s3Client.send(new ListObjectsV2Command({
-        Bucket: bucket,
-        Prefix: "radiology/",
-      }));
-      for (const obj of response.Contents ?? []) {
-        if (obj.Key && obj.Key.toLowerCase().includes(searchKey) && !keys.includes(obj.Key)) {
-          keys.push(obj.Key);
+      const scoped = await listAllObjectsUnderPrefix(bucket, prefix);
+      for (const k of scoped) {
+        if (k.toLowerCase().includes(searchKey) && !keys.includes(k)) {
+          keys.push(k);
         }
       }
     }
-    
+
     const result: { objectPath: string; patientImages?: string[]; attachmentPatientId?: string } = {
       objectPath: keys[0] ?? "",
     };
-    
+
     if (!result.objectPath) {
       res.status(404).json({ error: "No images found matching the criteria" });
       return;
     }
-    
+
     if (patientId) {
       result.attachmentPatientId = patientId;
       if (!keys[0]?.startsWith("radiology/")) {
@@ -514,7 +593,7 @@ router.post("/storage/images/search", async (req: Request, res: Response) => {
       }
       result.patientImages = keys;
     }
-    
+
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: "Failed to search images", details: String(error) });
