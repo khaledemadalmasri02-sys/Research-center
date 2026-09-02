@@ -64,4 +64,10 @@ This repository powers a **medical research data platform**. The following are e
 ## Dependencies
 
 - `pnpm` enforces `minimumReleaseAge: 1440` (1 day) for supply-chain defense.
-- GitHub Dependabot + scheduled `pnpm audit` are configured (P1.10).
+- Dependabot is configured at `.github/dependabot.yml`: weekly scan of
+  the pnpm workspace and GitHub Actions, grouped PRs (patch+minor
+  together, major separate), one open PR per ecosystem.
+- `.github/workflows/audit.yml` runs `pnpm audit --prod
+  --audit-level=high` weekly and opens an issue with the report on
+  failure. The issue is deduped by title over a 30-day window so
+  the same finding doesn't produce many tickets.

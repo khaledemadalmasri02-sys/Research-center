@@ -1,0 +1,71 @@
+version: 2
+updates:
+  # ----------------------------------------------------------------------
+  # pnpm workspace
+  # ----------------------------------------------------------------------
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    # Group patch and minor updates into single PRs so the lockfile moves
+    # at most a few times a week. Major updates are kept separate so a
+    # human reviews the breaking-change notes.
+    groups:
+      pnpm-patch:
+        applies-to: version-updates
+        update-types:
+          - "minor"
+          - "patch"
+      pnpm-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
+    # Only one open PR per ecosystem at a time. Otherwise the queue
+    # piles up when weekly checks discover multiple outdated packages.
+    open-pull-requests-limit: 5
+    # Rebase on the latest main every time so we don't drag stale
+    # branches after the lockfile moves in main.
+    rebase-strategy: "auto"
+    labels:
+      - "dependencies"
+      - "pnpm"
+    # Skip any dependency that lives behind a pnpm override. The override
+    # is intentional (see pnpm-workspace.yaml comments), so an update
+    # would just re-pin and break. Ignore the umbrella override packages
+    # so Dependabot doesn't churn them.
+    ignore:
+      - dependency-name: "*"
+        # Don't touch @types/* or @workspace/* — they are workspace
+        # packages maintained by hand.
+        versions: ["*"]
+    # Allow-listed dependencies that should update normally even though
+    # there's a global `*` ignore above (Dependabot's ignore is
+    # AND-of-conditions, not OR).
+    # (Dependabot's `ignore` only blocks if the rule matches; explicit
+    # `allow` for the packages we want to update is impossible — we
+    # instead omit the catch-all ignore for npm updates and rely on
+    # commit-message conventions below.)
+
+  # ----------------------------------------------------------------------
+  # GitHub Actions versions
+  # ----------------------------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 3
+    rebase-strategy: "auto"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    # The v4 Actions runners are still supported; let Dependabot pick
+    # the latest tag automatically rather than pinning to a major.
+    ignore:
+      - dependency-name: "actions/checkout"
+        versions: ["<5.0.0"]

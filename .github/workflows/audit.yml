@@ -1,0 +1,118 @@
+name: Audit
+
+# Runs `pnpm audit` weekly and opens an issue with the report on
+# failure. Complements dependabot.yml (which PRs individual updates)
+# by catching the long tail of transitive CVEs in one weekly snapshot.
+
+on:
+  schedule:
+    # Mondays at 06:00 UTC, after Dependabot's weekly scan.
+    - cron: "0 7 * * 1"
+  workflow_dispatch: # allow manual runs from the Actions UI
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  pnpm-audit:
+    name: pnpm audit (prod)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install workspace dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pnpm audit (production deps only)
+        id: audit
+        # --prod skips devDependencies (testing/build tooling) so we
+        # focus on the attack surface shipped to production.
+        # --audit-level=high surfaces only high and critical severities.
+        # We capture the exit status of pnpm audit into GITHUB_ENV so
+        # the next step can branch on it. `continue-on-error: true`
+        # stops the step from failing the workflow — we want to open
+        # an issue for any high+ finding, not break the schedule.
+        run: |
+          set +e
+          pnpm audit --prod --audit-level=high 2>&1 | tee audit.txt
+          AUDIT_EXIT=${PIPESTATUS[0]}
+          echo "AUDIT_EXIT=${AUDIT_EXIT}" >> "$GITHUB_ENV"
+          exit 0
+        continue-on-error: true
+
+      - name: Always run full audit at info level (for the issue body)
+        run: pnpm audit --prod --audit-level=info > audit-full.txt || true
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pnpm-audit-report
+          path: audit*.txt
+        if: always()
+
+      - name: Open issue on audit failure
+        if: env.AUDIT_EXIT != '0' && env.AUDIT_EXIT != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('node:fs');
+            const report = fs.readFileSync('audit-full.txt', 'utf8').slice(0, 60_000);
+            const body = [
+              '`pnpm audit` flagged high or critical advisories on production dependencies.',
+              '',
+              '- Workflow: <https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>',
+              '- Commit: `${{ github.sha }}`',
+              '',
+              '## Report',
+              '',
+              '```',
+              report,
+              '```',
+              '',
+              'Next steps:',
+              '1. Review the advisories above.',
+              '2. Bump or replace the affected packages.',
+              '3. If a fix is not yet available, document the risk in SECURITY.md and set Dependabot to ignore the package.',
+              '',
+              '_This issue is auto-filed by `.github/workflows/audit.yml`._',
+            ].join('\n');
+            // Avoid piling up identical issues: dedupe by title within
+            // the last 30 days.
+            const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'security,dependencies',
+              since,
+              per_page: 50,
+            });
+            const dup = existing.data.find((i) => i.title === 'pnpm audit: high/critical advisories');
+            if (dup) {
+              console.log('A similar issue is already open:', dup.html_url);
+              // Append a comment with the latest run URL.
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: dup.number,
+                body: `Re-run of \`pnpm audit\` on \`${{ github.sha }}\`: ${process.env.AUDIT_EXIT !== '0' ? 'still failing' : 'passes now'}.\n\n<https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}>`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'pnpm audit: high/critical advisories',
+                body,
+                labels: ['security', 'dependencies'],
+              });
+            }
