@@ -130,8 +130,14 @@ Generated from the full project analysis. Each item has: **priority**, **why it 
 **Scope:** Enable both; fix the (likely few) resulting errors.
 **Acceptance:** `pnpm typecheck` passes with stricter config.
 
-### 17. Delete legacy artifacts
-**Why:** `artifacts/worker-api/` is superseded by `research/`; `research/public-legacy/` is a committed backup of an old SPA bundle; `mockup-sandbox` + `local-api` look orphaned; `research/public/**` is a build artefact committed by some flow.
+### 17. Delete legacy artifacts (partial)
+**Why:** `artifacts/worker-api/` is still used by the admin root of the
+website (see `docs/architecture/routing.md`) — it cannot be deleted.
+`research/public-legacy/` is a committed backup of an old SPA bundle;
+`mockup-sandbox` + `local-api` look orphaned; `research/public/**` is a
+build artefact committed by some flow. Scope: remove the truly-orphaned
+parts (public-legacy, mockup-sandbox, local-api, the public/ build
+artefacts) and document why worker-api stays.
 **Scope:** Remove or move to an `archive/` branch. Gitignore `research/public/**`. Remove from workspace `packages`.
 **Acceptance:** Repo size shrinks; build flow doesn't commit generated artefacts.
 

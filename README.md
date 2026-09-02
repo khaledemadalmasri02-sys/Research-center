@@ -5,26 +5,37 @@ A web application for managing radiology patient data with image storage support
 ## Architecture
 
 ```
-            ┌──────────────────────┐
-            │      Frontend        │
-            │  (React + Vite)      │
-            └──────────┬───────────┘
-                       │
-                       ▼
-            ┌──────────────────────┐
-            │       Backend        │
-            │   (Express + Node)   │
-            │  Auth/API/Server     │
-            └───────┬───────┬──────┘
-                    │       │
-              metadata │ objects
-                    │       │
-                    ▼       ▼
-            ┌──────────┐  ┌─────────────┐
-            │ Database │  │    MinIO    │
-            │  (Postgres)│  │   (S3)     │
-            └──────────┘  └─────────────┘
+             ┌──────────────────────┐
+             │      Frontend        │
+             │  (React + Vite)      │
+             └──────────┬───────────┘
+                        │
+                        ▼
+             ┌──────────────────────┐
+             │  Cloudflare Worker   │  ← D1 (consent, cohort,
+             │  (research/)         │    dicom, ML, reports, …)
+             │                      │  ← proxies /api/* →
+             └──────────┬───────────┘
+                        │
+                        ▼
+             ┌──────────────────────┐
+             │       Backend        │
+             │   (Express + Node)   │
+             │  Auth/API/Server     │
+             └───────┬───────┬──────┘
+                     │       │
+               metadata │ objects
+                     │       │
+                     ▼       ▼
+             ┌──────────┐  ┌─────────────┐
+             │ Database │  │    MinIO    │
+             │  (Postgres)│  │   (S3)     │
+             └──────────┘  └─────────────┘
 ```
+
+See [docs/architecture/routing.md](docs/architecture/routing.md) for the
+production request flow, which paths the Worker serves directly, and
+how `/api/*` falls through to the api-server.
 
 ## Features
 
