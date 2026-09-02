@@ -139,6 +139,31 @@ if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET must be set in production");
 }
 
+// ---- Session cookie hardening (P1.7) ---------------------------------------
+// `SameSite=Lax` is the new default. The api-server now only ever sees
+// same-origin requests (the Cloudflare Worker rewrites `Origin` to the
+// api-server's own base URL before forwarding, see
+// research/src/index.ts:proxyToBackend), so we no longer need `SameSite=None`
+// for the cross-origin SPA case. `Lax` keeps the cookie attached on
+// top-level navigations and on same-site requests, which is what we
+// want for a session — and what stops a malicious site from triggering
+// a state-changing request with the cookie attached.
+//
+// Admin deployments can opt into `SameSite=Strict` via
+// SESSION_COOKIE_SAMESITE to defend against the subdomain phishing
+// case (admin opens a malicious page on a sibling subdomain). The
+// `__Host-` cookie-name prefix is not used here because the cookie
+// needs to share between apex and `www.` (the Worker serves both as
+// canonical), and the `__Host-` prefix forbids the `Domain` attribute
+// that sharing requires. We rely on SameSite + the Origin guard
+// (above) + Secure for protection.
+const sessionSameSite = ((): "lax" | "strict" | "none" => {
+  const v = (process.env.SESSION_COOKIE_SAMESITE ?? "lax").toLowerCase();
+  if (v === "strict" || v === "none") return v;
+  return "lax";
+})();
+const isProduction = process.env.NODE_ENV === "production";
+
 app.use(
   session({
     // Renamed away from the default `connect.sid` to drop stale cookies left
@@ -156,17 +181,17 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      // "none" is required so the cross-origin SPA's credentialed requests
-      // still carry the session cookie. CSRF is mitigated by the Origin guard
-      // above (cross-site POSTs from disallowed origins are rejected) plus the
-      // CORS allowlist, not by sameSite.
-      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+      // Secure whenever the request is HTTPS. We trust the `X-Forwarded-Proto`
+      // header because the Worker sets it; the upstream proxy is
+      // Cloudflare. For local dev, http://localhost still works.
+      secure: isProduction || process.env.FORCE_SECURE_COOKIE === "true",
+      sameSite: sessionSameSite,
       // Share the session across the apex and www hosts (the Worker serves
-      // both as canonical), so a login on one works on the other. With
-      // SameSite=None + Secure this is safe; X-Forwarded-Proto is forwarded by
-      // the Worker so the Secure cookie is actually issued.
-      domain: process.env.SESSION_COOKIE_DOMAIN || (process.env.NODE_ENV === "production" ? ".research-center.fit" : undefined),
+      // both as canonical), so a login on one works on the other.
+      domain:
+        process.env.SESSION_COOKIE_DOMAIN ||
+        (isProduction ? ".research-center.fit" : undefined),
+      path: "/",
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     },
   }),

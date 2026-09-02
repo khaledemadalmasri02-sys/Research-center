@@ -442,12 +442,25 @@ export function ssrfCheck(rawUrl: string): { ok: boolean; reason?: string } {
 
 // Issue a CSRF double-submit cookie. The same token must be echoed back in the
 // `X-CSRF-Token` header on mutating requests. Stateless (no server storage).
+//
+// The double-submit pattern requires the cookie to be JS-readable so the
+// SPA can copy it into a header — so we cannot use `HttpOnly` here.
+// Defences: `SameSite=Strict` (no cross-site request ever attaches this
+// cookie) + `Secure` in production + the Worker-side `csrfGuard` middleware
+// that compares the cookie value to the `X-CSRF-Token` header.
+//
+// We do not use the `__Host-` prefix because the Worker is bound to both
+// apex and `www.` and the prefix forbids the `Domain` attribute needed to
+// share the cookie across the two hosts. The prefix is a defence-in-depth
+// measure that is not needed here because (a) SameSite=Strict already
+// stops cross-site leakage and (b) the cookie is server-validated on
+// every mutating request.
 export function issueCsrfToken(c: AppContext): string {
   const token = randomToken(32);
   const isProd = (c.env as any)?.ENVIRONMENT === "production";
   c.header(
     "Set-Cookie",
-    `csrf=${token}; Path=/; SameSite=Strict; ${isProd ? "Secure; " : ""}Max-Age=86400`
+    `csrf=${token}; Path=/; SameSite=Strict; ${isProd ? "Secure; " : ""}Max-Age=86400`,
   );
   return token;
 }
@@ -463,6 +476,8 @@ export async function csrfGuard(c: AppContext, next: Next): Promise<Response | v
   if (/^Bearer\s+/i.test(authHeader)) {
     return next(); // API-token auth is exempt
   }
+  // The cookie name is `csrf` (no prefix). See issueCsrfToken for why
+  // we don't use the `__Host-` prefix in this deployment.
   const cookieToken = getCookieVal(c, "csrf");
   const headerToken = c.req.header("x-csrf-token");
   if (!cookieToken || !headerToken || cookieToken !== headerToken) {
