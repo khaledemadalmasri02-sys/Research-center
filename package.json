@@ -21,6 +21,8 @@
     "db:migrate": "bash scripts/db-migrate.sh",
     "db:generate": "pnpm -F @workspace/db generate",
     "db:migrate:postgres": "pnpm -F @workspace/db migrate",
+    "api:codegen": "pnpm -F @workspace/api-spec codegen",
+    "api:codegen:check": "pnpm -F @workspace/api-spec codegen:check",
     "db:migrate:local": "cd research && wrangler d1 execute mednexus-research --local --file=./schema.sql",
     "d1:migrate": "cd research && pnpm install && pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql",
     "d1:migrate:local": "cd research && pnpm exec wrangler d1 execute mednexus-research --local --file=./schema.sql",

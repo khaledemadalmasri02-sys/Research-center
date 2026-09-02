@@ -74,6 +74,9 @@ artifacts/*/coverage/
 /.kilo/
 .kilo/agent/PLAN.md
 
+# Orval codegen sandbox (created by lib/api-spec/scripts/check-codegen.ts)
+/.codegen-check/
+
 # Build artefacts (rebuilt on every deploy)
 /research/public/assets/*.js
 /research/public/assets/*.css
