@@ -38,6 +38,11 @@ function tooManyRequests(res: Response, retryAfterSec: number): void {
 const ALLOWED_IMAGE_CONTENT_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 const MAX_IMPORT_BYTES = 20 * 1024 * 1024; // 20 MB cap
 // Object reads are restricted to the application's own prefixes.
+// The canonical S3 prefix is `radiology/` (see STORAGE.md); the env
+// vars PUBLIC_OBJECT_SEARCH_PATHS / PRIVATE_OBJECT_DIR add additional
+// read paths for backward compatibility with buckets that contain
+// legacy data uploaded under the historical /mednexus/ or /objects/
+// layout. New writes only ever use `radiology/`.
 const ALLOWED_OBJECT_PREFIXES = ["radiology/"];
 
 const router: IRouter = Router();

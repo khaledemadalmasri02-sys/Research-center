@@ -36,7 +36,7 @@ PORT=3000 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mednexus" 
   APP_USERNAME="admin" APP_PASSWORD_HASH='$2b$10$your-bcrypt-hash-here' \
   S3_ENDPOINT="http://localhost:9000" S3_ACCESS_KEY_ID="minioadmin" S3_SECRET_ACCESS_KEY="minioadmin" \
   S3_BUCKET="mednexus" S3_FORCE_PATH_STYLE="true" \
-  PUBLIC_OBJECT_SEARCH_PATHS="/mednexus" PRIVATE_OBJECT_DIR="/objects" \
+  PUBLIC_OBJECT_SEARCH_PATHS="/mednexus" PRIVATE_OBJECT_DIR="/mednexus" \
   npx tsx artifacts/api-server/src/index.ts &
 
 # Wait for api-server to start

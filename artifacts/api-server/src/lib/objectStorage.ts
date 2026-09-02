@@ -22,6 +22,12 @@ import {
 
 const DEFAULT_S3_REGION = "us-east-1";
 const DEFAULT_SIGNED_URL_EXPIRES_SECONDS = 300;
+
+// Legacy read-path env vars. New code writes only to
+// <bucket>/radiology/<object-id>; the env vars below are kept so a
+// bucket that still contains objects from an older deployment
+// (under the historical /mednexus/ or /objects/ prefix) is
+// readable. See STORAGE.md (repo root) for the canonical scheme.
 const PUBLIC_OBJECT_SEARCH_PATHS_ENV = "PUBLIC_OBJECT_SEARCH_PATHS";
 const PRIVATE_OBJECT_DIR_ENV = "PRIVATE_OBJECT_DIR";
 

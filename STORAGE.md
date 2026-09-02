@@ -1,167 +1,170 @@
-# Storage Architecture & Migration Guide
+# Storage Architecture
 
-## Overview
+This document describes how the api-server stores and retrieves
+radiology images. The conventions here are the **canonical scheme**;
+any code that generates a different prefix is a bug.
 
-This document describes the image storage architecture and provides guidance for migration from existing storage solutions.
+## TL;DR
+
+- **Single canonical S3 prefix:** `radiology/`
+- **Bucket:** whatever `S3_BUCKET` is set to (default `mednexus`)
+- **Object key format:** `radiology/<uuid>` for direct uploads,
+  `radiology/patient_<id>_<uuid>...` for batched uploads,
+  `radiology/<uuid>` again for SSRF imports.
+- **Read paths:** `/api/storage/objects/<full-key>` — auth required
+  for every key not under the public allowlist (see below).
+- **No public bucket prefix in production.** The legacy `radiology-public/`
+  and `radiology-objects/` paths described in earlier revisions of this
+  document no longer exist. Old buckets can keep the historical data,
+  but new code reads/writes only `radiology/`.
 
 ## Current Architecture
 
 ```text
 Frontend
    ↓
-Backend API
+api-server (Express)
    ├── Database → metadata (patient_id, object_key, file info)
    └── MinIO/S3 → actual image files
-       ├── radiology-public/  (publicly accessible)
-       └── radiology-objects/uploads/  (private, authenticated access)
+       └── <bucket>/radiology/<object-id>
 ```
+
+The api-server **owns** the key namespace under `radiology/`. Browsers
+never see the bucket directly; every read goes through
+`/api/storage/objects/<key>` (auth) or a short-lived presigned URL.
 
 ## Object Naming Convention
 
-### Upload Flow
+### Uploads
 
-1. Client requests a presigned URL via `POST /api/storage/uploads/request-url`
-2. Backend generates unique object key and returns presigned PUT URL
-3. Client uploads directly to S3 using the presigned URL
-4. Backend stores metadata in database
+Three flavours, all under `radiology/`:
 
-### Object Key Structure
+| Source           | Format                                       | Used by                                |
+| ---------------- | -------------------------------------------- | -------------------------------------- |
+| `request-url`    | `radiology/<object-id>`                      | `routes/storage.ts:requestUploadUrl`   |
+| `upload-file`    | `radiology/<object-id>`                      | `routes/storage.ts:uploadFile`         |
+| `images/import`  | `radiology/<object-id>`                      | `routes/storage.ts:importImage`        |
+| `images/batch`   | `radiology/patient_<id>_<uuid>...`           | `routes/storage.ts:batchImportImages`   |
 
-```
-radiology-objects/uploads/{uuid}-{timestamp}-{filename}
-radiology-public/{some-public-id}
-```
+`<object-id>` is a UUIDv4 generated server-side. The full path
+returned to the client is what the api-server stored (no
+transformation), and it is what the api-server uses to read or
+delete the object.
 
-Example:
-```
-radiology-objects/uploads/a1b2c3d4-1690123456789-xray.jpg
-```
+### Reads
 
-## Database Schema
+`/api/storage/objects/<key>` — every request is authenticated.
+The route accepts both:
 
-### radiology_images Table
+- **Canonical keys:** `radiology/...` (current scheme)
+- **Legacy keys:** anything under the `PUBLIC_OBJECT_SEARCH_PATHS` or
+  `PRIVATE_OBJECT_DIR` env vars (see below)
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | serial | Primary key |
-| patient_id | integer | Foreign key to patients |
-| study_id | text | Patient study identifier |
-| object_key | text | S3 object key |
-| original_filename | text | Original uploaded filename |
-| mime_type | text | Image MIME type |
-| file_size | integer | File size in bytes |
-| etag | text | S3 ETag for verification |
-| upload_timestamp | timestamp | When file was uploaded |
-| metadata | json | Additional metadata |
+The legacy env vars are kept only so a bucket that contains old data
+from a prior deployment (where keys were prefixed `/mednexus/...` or
+`/objects/...`) is still readable. New writes never use them.
 
-### Legacy Fields (Backwards Compatibility)
+## Env Variables
 
-- `radiologyImageFilePathOrLink` - Single image path/link
-- `radiologyImages` - JSON array of paths
+| Variable                    | Default     | Purpose                                           |
+| --------------------------- | ----------- | ------------------------------------------------- |
+| `S3_BUCKET`                 | (required)  | Bucket name                                       |
+| `S3_ENDPOINT`               | (local)     | S3/MinIO endpoint                                 |
+| `S3_REGION`                 | `us-east-1` | For AWS S3; `auto` for R2                        |
+| `S3_ACCESS_KEY_ID`          | (required)  |                                                   |
+| `S3_SECRET_ACCESS_KEY`      | (required)  |                                                   |
+| `S3_FORCE_PATH_STYLE`       | `false`     | `true` for MinIO                                  |
+| `PUBLIC_OBJECT_SEARCH_PATHS` | `/mednexus`  | **Legacy read paths only.** Used to find objects under `/<dir>/<entityId>` (rare; for back-compat with old data). Not used for new writes. |
+| `PRIVATE_OBJECT_DIR`        | `/mednexus`  | **Legacy read paths only.** Same as above. Not used for new writes. |
 
-These are preserved for backwards compatibility but new uploads store object keys in the dedicated table or as `/objects/...` paths.
+`PUBLIC_OBJECT_SEARCH_PATHS` and `PRIVATE_OBJECT_DIR` are
+**compatibility knobs** for buckets that contain objects under the
+historical `/mednexus/...` layout. They are not part of the
+canonical write path. If your bucket has no legacy data, set them
+to empty strings and the api-server will reject the read with a
+404.
+
+In dev (`scripts/dev.sh`) the api-server is started with
+`PUBLIC_OBJECT_SEARCH_PATHS="/mednexus"` and
+`PRIVATE_OBJECT_DIR="/objects"`. These are **only used when
+reading** old data and have no effect on new uploads. The mismatch
+between the two values is intentional: legacy public reads look
+under `/mednexus/<id>` and legacy private reads under
+`/objects/<id>`. See the comments in `src/lib/objectStorage.ts` for
+the precise lookup logic.
 
 ## Image Retrieval
 
-### Options
+### Streaming (authenticated, default)
 
-**Option A: Backend Streaming**
 ```
-GET /api/radiology-images/:id
+GET /api/storage/objects/<key>
    ↓
-Backend validates auth
+api-server validates session cookie
    ↓
-S3/MinIO
+reads from S3
    ↓
-Image stream to client
-```
-
-**Option B: Presigned URLs (Recommended)**
-```
-GET /api/radiology-images/:id/url
-   ↓
-Backend validates auth
-   ↓
-Generate presigned S3 URL
-   ↓
-Client downloads directly from S3
+streams bytes to the client
 ```
 
-Presigned URLs are used by default with 300-second TTL.
+The server checks that the key starts with `radiology/` (see
+`ALLOWED_OBJECT_PREFIXES` in `routes/storage.ts`). Other keys return
+403.
+
+### Presigned URL (recommended for large images)
+
+```
+GET /api/storage/presigned-url/<bucket>/<key>
+   ↓
+api-server validates session cookie
+   ↓
+generates 5-minute presigned S3 URL
+   ↓
+client downloads directly from S3
+```
+
+Presigned URLs are signed by the api-server's S3 credentials and
+expire automatically.
 
 ## File Validation
 
 Files are validated before upload:
 
-- MIME type check (via `Content-Type` header)
-- File size limit (configurable via `MAX_IMAGE_SIZE_MB`)
-- Extension verification
-
-## Migration from Existing Storage
-
-### For Base64 Images in Database
-
-```bash
-# Run migration script
-tsx scripts/migrate-images.ts
-```
-
-Migration flow:
-1. Find records with Base64 image data
-2. Decode image to binary
-3. Generate safe object key
-4. Upload to MinIO
-5. Verify upload
-6. Update database record
-7. Log results (do NOT delete old data automatically)
-
-### Migration Script Location
-
-`scripts/migrate-images.ts` - Handles backwards-compatible migration
+- MIME type check (only `image/png`, `image/jpeg`, `image/gif`,
+  `image/webp` accepted; SVG/XML/HTML rejected to prevent stored
+  XSS via uploaded "images")
+- File size cap (20 MB for SSRF imports, 100 MB for direct
+  uploads, configurable)
+- Filename sanitisation (`sanitizeFilename` in
+  `routes/storage.ts:89`)
 
 ## Security Considerations
 
-### Never Store Sensitive Data In:
+### Never store sensitive data in:
+
 - Object keys (use UUIDs)
-- Filenames (sanitize or replace)
+- Filenames (sanitise or replace with the UUID)
 
 ### Always:
-- Verify user authorization before object access
-- Use short-lived presigned URLs (default: 5 minutes)
-- Never expose S3 credentials to frontend
-- Set appropriate bucket policies
+
+- Verify the session cookie before any object read
+- Use short-lived presigned URLs (5-minute TTL default)
+- Never expose S3 credentials to the frontend
+- Set the bucket policy to deny anonymous access
+- Use the SSRF-protected fetch (`safeFetch`) for any `images/import`
 
 ## Switching Storage Backends
 
-### From MinIO to Cloudflare R2
+The api-server speaks the S3 API, so swapping MinIO ↔ R2 ↔ AWS S3
+requires only env-var changes:
 
-1. Update `.env`:
-   ```env
-   S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
-   S3_ACCESS_KEY_ID=<access-key-id>
-   S3_SECRET_ACCESS_KEY=<secret-access-key>
-   S3_BUCKET=<bucket-name>
-   S3_REGION=auto  # R2 specific
-   ```
+```env
+S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com  # for R2
+S3_REGION=auto
+```
 
-2. Create bucket in R2 dashboard
-
-3. No code changes required - same S3-compatible API
-
-### From R2 to MinIO
-
-1. Update `.env`:
-   ```env
-   S3_ENDPOINT=http://localhost:9000
-   S3_ACCESS_KEY_ID=minioadmin
-   S3_SECRET_ACCESS_KEY=minioadmin
-   S3_BUCKET=mednexus
-   ```
-
-2. Create bucket:
-   ```bash
-   docker exec -it mednexus-minio mc mb local/mednexus
-   ```
+No code changes are required. The new bucket should be empty (or
+contain a one-time `mc mirror` copy from the old bucket).
 
 ## Backup Considerations
 
@@ -172,36 +175,33 @@ pg_dump -h localhost -U postgres mednexus > backup.sql
 
 ### MinIO Data
 ```bash
-# Depends on volume configuration
-docker exec minio mc export local > minio-backup.tar
+docker exec minio mc mirror local/mednexus /backup
 ```
 
 ## Troubleshooting
 
 ### "Bucket not found" error
 ```bash
-# Check bucket exists
 docker compose exec minio mc ls local/mednexus
-
-# Create if missing
 docker compose exec minio mc mb local/mednexus
 ```
 
 ### "Access denied" on upload
 1. Verify credentials in `.env`
 2. Check bucket policy allows writes
-3. Verify user has appropriate MinIO permissions
+3. Verify the IAM user has `PutObject` permission
 
-### Invalid presigned URL
-1. Check URL expiration (default: 5 minutes)
-2. Verify Content-Type header matches upload request
-3. Check S3_REGION matches bucket region
+### Object is on a `/mednexus/...` legacy path
+
+The bucket has objects from an earlier deployment. They are still
+readable via the legacy env vars. To migrate them, run a one-time
+script that copies each object to its new key under `radiology/...`
+and updates the database row's `object_key`.
 
 ## Testing Storage
 
 ### Upload test
 ```bash
-# Request upload URL
 curl -X POST http://localhost:3004/api/storage/uploads/request-url \
   -H "Content-Type: application/json" \
   -d '{"name":"test.jpg","size":1024,"contentType":"image/jpeg"}' \
@@ -210,11 +210,7 @@ curl -X POST http://localhost:3004/api/storage/uploads/request-url \
 
 ### Download test
 ```bash
-# Get object via streaming
-curl http://localhost:3004/api/storage/objects/uploads/test-uuid
-
-# Get presigned URL for external download
-curl http://localhost:3004/api/storage/presigned-url/mednexus/radiology-objects/uploads/test-uuid
+curl http://localhost:3004/api/storage/objects/radiology/test-uuid
 ```
 
 ### Health check
