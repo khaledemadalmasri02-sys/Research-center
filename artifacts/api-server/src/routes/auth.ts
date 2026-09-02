@@ -2,7 +2,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { eq } from "drizzle-orm";
 import { randomBytes } from "crypto";
 import { db, usersTable, signupRequestsTable, pool } from "@workspace/db";
-import { hashPassword, hashLoginToken, verifyPassword, isValidPassword, rateLimit } from "../lib/security";
+import { hashPassword, hashLoginToken, verifyPassword, isValidPassword, rateLimit, clientIp } from "../lib/security";
 import { writeAudit } from "../lib/audit";
 import { sendEmail } from "../lib/email";
 
@@ -18,10 +18,6 @@ const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
 
 // Valid-format bcrypt hash used only to equalize timing when no user exists.
 const DUMMY_HASH = "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewYh2dQHP8DjL0eW";
-
-function clientIp(req: Request): string {
-  return (req.ip as string) ?? "unknown";
-}
 
 function isLocked(user: { lockedUntil: Date | null } | undefined): boolean {
   if (!user?.lockedUntil) return false;

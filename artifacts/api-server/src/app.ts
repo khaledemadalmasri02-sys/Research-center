@@ -131,9 +131,27 @@ app.use(
     },
   }),
 );
-// JSON bodies capped; large uploads should use streaming (multer) in future.
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+// ---- Body parsers (P1.3) ----------------------------------------------------
+// The previous default of 50 MB JSON was a DoS amplification vector: an
+// unauthenticated client could pin a worker by uploading 50 MB of JSON
+// and force the server to allocate buffers. 1 MB is the right size for
+// the api-server's actual JSON payloads (most API responses are well
+// under 100 KB; the analysis endpoints do their own multer upload which
+// is rate-limited separately).
+//
+// Large payloads have their own dedicated paths:
+// - /api/storage/uploads/request-url  →  presigned URL, no body
+// - /api/storage/upload-file          →  multer (configured in storage.ts)
+// - /api/analysis/datasets            →  multer (configured in analysis.ts)
+// - /api/tour-config                  →  express.raw (80 MB, see route)
+//
+// Allow override via env for one-off debug cases. Bumping this without
+// also raising the per-IP rate limit on /api/storage/* would re-open the
+// DoS vector; if you need to raise this in production, also raise the
+// upload rate limit.
+const jsonBodyLimit = process.env.JSON_BODY_LIMIT ?? "1mb";
+app.use(express.json({ limit: jsonBodyLimit }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET must be set in production");

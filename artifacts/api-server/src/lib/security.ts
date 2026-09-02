@@ -76,3 +76,24 @@ export function rateLimit(
 export function __resetRateLimits(): void {
   buckets.clear();
 }
+
+/**
+ * Best-effort client IP for rate-limiting. Honours `X-Forwarded-For` (the
+ * Worker sets it on every proxied request), falls back to the socket
+ * address, and treats the placeholder `127.0.0.1` returned by supertest
+ * as `test-client` so a per-IP bucket in tests doesn't accidentally span
+ * every request.
+ */
+export function clientIp(req: { headers: Record<string, string | string[] | undefined>; ip?: string; socket?: { remoteAddress?: string } }): string {
+  const xff = req.headers["x-forwarded-for"];
+  if (typeof xff === "string" && xff.length) {
+    return xff.split(",")[0]!.trim();
+  }
+  if (Array.isArray(xff) && xff.length) {
+    return String(xff[0]).split(",")[0]!.trim();
+  }
+  const sock = req.socket?.remoteAddress;
+  if (sock && sock !== "127.0.0.1" && sock !== "::1") return sock;
+  if (req.ip && req.ip !== "127.0.0.1" && req.ip !== "::1") return req.ip;
+  return "test-client";
+}

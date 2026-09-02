@@ -14,6 +14,24 @@ import { ensureUserPatientsDefinition } from "../lib/patientsCollection";
 import { logger } from "../lib/logger";
 import { requireAuth } from "./auth";
 import { safeFetch } from "../lib/ssrf";
+import { rateLimit, clientIp } from "../lib/security";
+
+// Per-IP rate limits on the upload paths. Storage already sits behind
+// `requireAuth` so a leaked token is a precondition, but a token-holder
+// on many devices / many IPs can still hammer the upload endpoints.
+// These budgets stop a single IP from doing 1000+ presign requests / min.
+const UPLOAD_REQ_LIMIT = 60; // per IP per 15 min
+const UPLOAD_REQ_WINDOW_MS = 15 * 60 * 1000;
+const UPLOAD_FILE_LIMIT = 30; // per IP per 15 min
+const UPLOAD_FILE_WINDOW_MS = 15 * 60 * 1000;
+const SSRF_IMPORT_LIMIT = 30; // per IP per 15 min — costs a network round-trip
+const SSRF_IMPORT_WINDOW_MS = 15 * 60 * 1000;
+
+/** Standard 429 response shape used by every rate-limited route. */
+function tooManyRequests(res: Response, retryAfterSec: number): void {
+  res.set("Retry-After", String(retryAfterSec));
+  res.status(429).json({ error: `Too many requests. Try again in ${retryAfterSec}s.` });
+}
 
 // Only these image MIME types are accepted; SVG/XML/HTML are rejected to
 // prevent stored XSS via uploaded "images".
@@ -163,6 +181,11 @@ router.get("/storage/health", async (_req: Request, res: Response) => {
 });
 
 router.post("/storage/uploads/request-url", async (req: Request, res: Response) => {
+  const limit = rateLimit(`upload-req:${clientIp(req)}`, UPLOAD_REQ_LIMIT, UPLOAD_REQ_WINDOW_MS);
+  if (!limit.success) {
+    tooManyRequests(res, limit.retryAfterSec);
+    return;
+  }
   const parsed = RequestUploadUrlBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Missing or invalid required fields" });
@@ -280,6 +303,11 @@ interface ImportImageFromUrlResponse {
 }
 
 router.post("/storage/images/import", async (req: Request, res: Response) => {
+  const limit = rateLimit(`ssrf-import:${clientIp(req)}`, SSRF_IMPORT_LIMIT, SSRF_IMPORT_WINDOW_MS);
+  if (!limit.success) {
+    tooManyRequests(res, limit.retryAfterSec);
+    return;
+  }
   const body = validateImportImageBody(req.body);
   if (!body) {
     res.status(400).json({ error: "Missing or invalid required fields" });
@@ -489,8 +517,13 @@ router.post("/storage/images/search", async (req: Request, res: Response) => {
 });
 
 router.post("/storage/upload-file", async (req: Request, res: Response) => {
+  const limit = rateLimit(`upload-file:${clientIp(req)}`, UPLOAD_FILE_LIMIT, UPLOAD_FILE_WINDOW_MS);
+  if (!limit.success) {
+    tooManyRequests(res, limit.retryAfterSec);
+    return;
+  }
   const patientId = req.body?.patientId as string | undefined;
-  
+
   // Ensure bucket exists first
   try {
     await objectStorageService.ensureBucketExists();

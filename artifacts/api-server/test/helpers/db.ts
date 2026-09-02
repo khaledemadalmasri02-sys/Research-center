@@ -43,13 +43,18 @@ export function withDb() {
     // Add a test-only error logger that prints the inner error so we can
     // see 500 root causes during `pnpm test`. In production, Express's
     // default error handler hides them.
+    //
+    // CRITICAL: call `next(err)` so the request continues through
+    // Express's error-handling chain. Without it, requests that throw
+    // (e.g. body-parser's PayloadTooLargeError) hang indefinitely.
     app.use(
-      (err: Error, _req: unknown, res: { statusCode?: number; status?: (n: number) => unknown; headersSent?: boolean }, _next: unknown) => {
+      (err: Error, _req: unknown, res: { statusCode?: number; status?: (n: number) => unknown; headersSent?: boolean }, next: (e?: unknown) => void) => {
         // eslint-disable-next-line no-console
         console.error("[test-error]", err?.stack ?? err);
         if (!res.headersSent) {
           (res as { status: (n: number) => unknown }).status(500);
         }
+        next(err);
       },
     );
 

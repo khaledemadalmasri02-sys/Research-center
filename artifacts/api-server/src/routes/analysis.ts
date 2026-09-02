@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import multer from "multer";
 import { eq, desc, and, like } from "drizzle-orm";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
+import { rateLimit, clientIp } from "../lib/security";
 import {
   db,
   analysisDatasetsTable,
@@ -42,6 +43,22 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 50 * 1024 * 1024, files: 1 },
 });
+
+// Per-IP rate limits on the analysis endpoints. The dataset upload is
+// multer-backed (50 MB cap, 1 file) and the analyze endpoint is
+// CPU-bound (stats engine). A leaked auth token should not be enough
+// to make either a DoS vector.
+const DATASET_UPLOAD_LIMIT = 20; // per IP per 15 min
+const DATASET_UPLOAD_WINDOW_MS = 15 * 60 * 1000;
+const ANALYZE_LIMIT = 30; // per IP per 15 min
+const ANALYZE_WINDOW_MS = 15 * 60 * 1000;
+const FROM_QUERY_LIMIT = 30; // per IP per 15 min
+const FROM_QUERY_WINDOW_MS = 15 * 60 * 1000;
+
+function tooManyRequests(res: Response, retryAfterSec: number): void {
+  res.set("Retry-After", String(retryAfterSec));
+  res.status(429).json({ error: `Too many requests. Try again in ${retryAfterSec}s.` });
+}
 
 function ownerId(req: Request): number {
   return req.session.userId ?? 0;
@@ -103,6 +120,15 @@ router.post(
   requireAuth,
   upload.single("file"),
   async (req: Request, res: Response) => {
+    const limit = rateLimit(
+      `analysis-upload:${clientIp(req)}`,
+      DATASET_UPLOAD_LIMIT,
+      DATASET_UPLOAD_WINDOW_MS,
+    );
+    if (!limit.success) {
+      tooManyRequests(res, limit.retryAfterSec);
+      return;
+    }
     try {
       const file = (req as any).file as { originalname: string; buffer: Buffer; mimetype?: string } | undefined;
       if (!file) {
@@ -163,6 +189,15 @@ router.post(
 
 /** POST /api/analysis/datasets/from-query — build dataset from existing patients */
 router.post("/analysis/datasets/from-query", requireAuth, async (req: Request, res: Response) => {
+  const limit = rateLimit(
+    `analysis-from-query:${clientIp(req)}`,
+    FROM_QUERY_LIMIT,
+    FROM_QUERY_WINDOW_MS,
+  );
+  if (!limit.success) {
+    tooManyRequests(res, limit.retryAfterSec);
+    return;
+  }
   try {
     const body = req.body as {
       name?: string;
@@ -339,6 +374,11 @@ async function loadDataset(id: number, uid: number): Promise<{ dataset: Analysis
 
 /** POST /api/analysis/datasets/:id/analyze — run an analysis */
 router.post("/analysis/datasets/:id/analyze", requireAuth, async (req: Request, res: Response) => {
+  const limit = rateLimit(`analysis-run:${clientIp(req)}`, ANALYZE_LIMIT, ANALYZE_WINDOW_MS);
+  if (!limit.success) {
+    tooManyRequests(res, limit.retryAfterSec);
+    return;
+  }
   try {
     const id = Number(req.params.id);
     const { type, options } = req.body as { type: AnalysisType; options: AnalysisOptions };
