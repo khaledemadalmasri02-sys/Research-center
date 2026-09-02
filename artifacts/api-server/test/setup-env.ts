@@ -9,16 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-function readTestDbUrl(): string | undefined {
-  const file = path.join(
-    os.tmpdir(),
-    `mednexus-test-db-${process.ppid}.url`,
-  );
-  // process.ppid is the parent process (vitest runner); globalSetup runs in
-  // the parent context so its pid matches what we see as ppid here. As a
-  // safety net, also try the current pid.
+function readTestFile(prefix: string): string | undefined {
   for (const pid of [process.ppid, process.pid]) {
-    const f = path.join(os.tmpdir(), `mednexus-test-db-${pid}.url`);
+    const f = path.join(os.tmpdir(), `${prefix}-${pid}.url`);
     try {
       return fs.readFileSync(f, "utf8").trim();
     } catch {
@@ -28,7 +21,7 @@ function readTestDbUrl(): string | undefined {
   return undefined;
 }
 
-const url = readTestDbUrl();
+const url = readTestFile("mednexus-test-db");
 if (url) {
   process.env.DATABASE_URL = url;
 } else {
@@ -38,23 +31,29 @@ if (url) {
     "postgresql://test:test@localhost:5432/mednexus_test";
 }
 
+// Point S3 env vars at the MinIO testcontainer (or a local MinIO if global
+// setup didn't run).
+const minioUrl = readTestFile("mednexus-test-minio");
+process.env.S3_BUCKET ??= "test-bucket";
+process.env.S3_REGION ??= "us-east-1";
+if (minioUrl) {
+  process.env.S3_ENDPOINT = minioUrl;
+  process.env.S3_FORCE_PATH_STYLE = "true";
+  process.env.PUBLIC_OBJECT_SEARCH_PATHS = "/test-bucket";
+  process.env.PRIVATE_OBJECT_DIR = "/test-bucket";
+} else {
+  process.env.S3_ENDPOINT ??= "http://localhost:9000";
+  process.env.S3_FORCE_PATH_STYLE ??= "true";
+  process.env.PUBLIC_OBJECT_SEARCH_PATHS ??= "/test-bucket";
+  process.env.PRIVATE_OBJECT_DIR ??= "/test-bucket";
+}
+process.env.S3_ACCESS_KEY_ID ??= "minioadmin";
+process.env.S3_SECRET_ACCESS_KEY ??= "minioadmin";
+
 // Ensure NODE_ENV is set so the app's production guard doesn't trip.
 process.env.NODE_ENV ??= "development";
 process.env.SESSION_SECRET ??= "test-secret";
 process.env.ALLOWED_ORIGINS ??= "http://localhost:3003,http://127.0.0.1:3003";
-
-// Several api-server modules construct S3 client / ObjectStorageService at
-// import time. The auth tests don't touch S3, but the modules still load.
-// Provide dummy S3 env vars so module construction succeeds; storage tests
-// (P0.3 slice 2/3) will mock or replace these with a real MinIO container.
-process.env.S3_BUCKET ??= "test-bucket";
-process.env.S3_REGION ??= "us-east-1";
-process.env.S3_ENDPOINT ??= "http://localhost:9000";
-process.env.S3_ACCESS_KEY_ID ??= "minioadmin";
-process.env.S3_SECRET_ACCESS_KEY ??= "minioadmin";
-process.env.S3_FORCE_PATH_STYLE ??= "true";
-process.env.PUBLIC_OBJECT_SEARCH_PATHS ??= "/test-bucket";
-process.env.PRIVATE_OBJECT_DIR ??= "/test-bucket";
 
 // Force the Node process to interpret date strings as UTC. The api-server
 // uses naive `timestamp` columns (no timezone) for `lockedUntil` etc., so

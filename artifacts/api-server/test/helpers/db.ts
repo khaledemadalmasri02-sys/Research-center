@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
+import { HeadBucketCommand, CreateBucketCommand } from "@aws-sdk/client-s3";
+import { s3Client } from "../../src/lib/objectStorage";
 
 /**
  * Use this in every test file that hits the database:
@@ -55,6 +57,17 @@ export function withDb() {
     // container; we just create the tables on first use.
     await dbBootstrap.ensureAllTables();
     bootstrapped = true;
+
+    // Make sure the S3 bucket exists. The api-server's startup calls
+    // ensureBucket on listen; tests don't go through the startup chain.
+    const bucket = process.env.S3_BUCKET ?? "test-bucket";
+    try {
+      await s3Client.send(new HeadBucketCommand({ Bucket: bucket }));
+    } catch {
+      await s3Client.send(
+        new CreateBucketCommand({ Bucket: bucket }),
+      );
+    }
   });
 
   afterEach(async () => {
@@ -140,6 +153,29 @@ export function withDb() {
         ],
       );
       return rows[0].id;
+    },
+    /**
+     * Log a user in via the api-server's own /api/auth/login route and
+     * return a supertest agent that carries the session cookie. Use this
+     * for any test that hits a route gated by requireAuth.
+     */
+    async loginAs(
+      username: string,
+      password: string,
+    ): Promise<import("supertest").SuperAgentTest> {
+      if (!app) throw new Error("withDb: app not initialised");
+      // Lazy import to avoid a circular dep at module load.
+      const supertest = (await import("supertest")).default;
+      const agent = supertest.agent(app);
+      const res = await agent
+        .post("/api/auth/login")
+        .send({ username, password });
+      if (res.status !== 200) {
+        throw new Error(
+          `loginAs(${username}) failed: ${res.status} ${JSON.stringify(res.body)}`,
+        );
+      }
+      return agent;
     },
   };
 }
