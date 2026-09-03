@@ -20,6 +20,7 @@ import backupRouter from "./backup";
 import analysisRouter from "./analysis";
 import tourConfigRouter from "./tour-config";
 import inboundEmailRouter from "./inbound-email";
+import crashReportRouter from "./crash-report";
 import { authenticateApiToken } from "../lib/apiToken";
 
 const router: IRouter = Router();
@@ -28,6 +29,16 @@ const router: IRouter = Router();
 router.use(authenticateApiToken);
 router.use(authRouter);
 router.use(healthRouter);
+// Crash-report receiver is unauthenticated by design (the user
+// can't log in if the app is broken) and the payload carries no PII.
+// Rate limiting is at the Worker layer.
+//
+// IMPORTANT: must be mounted before any `router.use(requireAuth, ...)`
+// call. Express's `router.use(mw, subrouter)` runs the middleware for
+// every request, not just the ones the subrouter handles. So if this
+// is mounted after a `requireAuth, xxxRouter` block, the crash
+// reporter gets a 401 from the gate that runs first.
+router.use(crashReportRouter);
 router.use(requireAuth, patientsRouter);
 router.use(storageRouter);
 router.use(requireAuth, voiceRouter);

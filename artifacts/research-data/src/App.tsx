@@ -8,6 +8,9 @@ import { useLocation } from "wouter";
 import { Loader2 } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { ProductTour } from "@/components/product-tour";
+import { CommandPalette } from "@/components/command-palette";
+import { SkipToContent } from "@/components/skip-to-content";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { EASE_OUT } from "@/lib/motion";
 import { isDesktopMode } from "@/lib/desktop-mode";
 import {
@@ -21,6 +24,8 @@ import {
   RecordDefinitionEdit,
   RecordList,
   RecordDetail,
+  PatientCorridor,
+  PatientWorkspace,
   PatientRecordView,
   PatientRecordFormPage,
   NewRecordPage,
@@ -45,6 +50,7 @@ import {
   Ingest,
   SearchPage,
   DataAnalysis,
+  DataTableDemo,
 } from "@/components/desktop/app-registry";
 
 const queryClient = new QueryClient();
@@ -80,6 +86,8 @@ function ClassicApp({ canAdminAccess }: { canAdminAccess: boolean }) {
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/patients" component={Patients} />
+        <Route path="/patients/vr" component={PatientCorridor} />
+        <Route path="/patients/vr/:id" component={PatientWorkspace} />
         <Route path="/patients/new" component={NewRecordPage} />
         <Route path="/patients/:id" component={PatientRecordView} />
         <Route path="/patients/:id/edit" component={PatientRecordFormPage} />
@@ -111,6 +119,7 @@ function ClassicApp({ canAdminAccess }: { canAdminAccess: boolean }) {
         <Route path="/ingest" component={Ingest} />
         <Route path="/search" component={SearchPage} />
         <Route path="/data-analysis" component={DataAnalysis} />
+        <Route path="/data-table-demo" component={DataTableDemo} />
         <Route component={NotFound} />
       </Switch>
     </AnimatedRoutes>
@@ -159,22 +168,26 @@ function ProtectedRoutes() {
         <ClassicApp canAdminAccess={canAdminAccess} />
       )}
       <ProductTour />
+      <CommandPalette />
     </>
   );
 }
 
 function App() {
   return (
-    <MotionConfig reducedMotion="user">
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-            <ProtectedRoutes />
-          </WouterRouter>
-          <Toaster />
-        </TooltipProvider>
-      </QueryClientProvider>
-    </MotionConfig>
+    <ErrorBoundary>
+      <MotionConfig reducedMotion="user">
+        <SkipToContent />
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+              <ProtectedRoutes />
+            </WouterRouter>
+            <Toaster />
+          </TooltipProvider>
+        </QueryClientProvider>
+      </MotionConfig>
+    </ErrorBoundary>
   );
 }
 
