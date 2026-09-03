@@ -3,7 +3,6 @@ import type {
   AnalysisResult,
   AnalysisType,
   AnalysisOptions,
-  TabularData,
   DescriptiveOptions,
   TTestOptions,
   AnovaOptions,

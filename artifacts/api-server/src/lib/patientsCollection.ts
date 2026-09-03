@@ -1,5 +1,4 @@
-import { pool, db, patientsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { pool } from "@workspace/db";
 
 // The "Patients" collection is now a per-user record definition: each user gets
 // their own Patients collection that mirrors the patients they own. This keeps

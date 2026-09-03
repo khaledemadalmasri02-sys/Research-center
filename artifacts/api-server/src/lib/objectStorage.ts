@@ -6,7 +6,6 @@ import {
   HeadObjectCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
-  PutObjectAclCommand,
   type PutObjectCommandOutput,
   type HeadObjectOutput,
 } from "@aws-sdk/client-s3";

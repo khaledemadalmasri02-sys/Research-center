@@ -50,7 +50,6 @@ if (env === "production" && !rawAllowed?.length && secureCors !== "allow-any") {
 }
 
 const allowAny = secureCors === "allow-any";
-const strictCors = allowAny || !!rawAllowed?.length;
 const allowedOrigins =
   rawAllowed ??
   (allowAny

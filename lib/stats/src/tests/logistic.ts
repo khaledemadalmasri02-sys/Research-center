@@ -5,7 +5,7 @@
  */
 import { Dataset } from "../dataset";
 import { round, formatP } from "../describe";
-import { multiply, transpose, inverse } from "../linalg";
+import { multiply, inverse } from "../linalg";
 import { chiSquareCdf, logGamma } from "../mathx";
 import type { AnalysisResult, LogisticOptions } from "../types";
 

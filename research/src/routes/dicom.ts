@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppBindings, AppVariables, AppContext } from "../lib/env";
-import { getAuthUser, canEdit, isAdmin, writeAudit } from "../lib/security";
+import { getAuthUser, canEdit, writeAudit } from "../lib/security";
 
 // DICOM tags that carry direct PHI and must be stripped when de-identifying an
 // image's metadata. Keyed by common DICOM keyword (the data dictionary tag is

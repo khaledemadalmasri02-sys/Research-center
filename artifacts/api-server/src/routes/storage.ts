@@ -8,7 +8,7 @@ import { s3Client } from "../lib/objectStorage";
 import { PutObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
 import { db, patientsTable, pool } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { radiologyImageService } from "../lib/radiologyImages";
 import { ensureUserPatientsDefinition } from "../lib/patientsCollection";
 import { logger } from "../lib/logger";

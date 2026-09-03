@@ -51,7 +51,12 @@ export default defineConfig({
       workspace: apiZodSrc,
       client: "zod",
       target: "generated",
-      schemas: { path: "generated/types", type: "typescript" },
+      // Don't emit a separate `types/` subdir. The zod schemas already
+      // infer their types via `z.infer<typeof Schema>`, and emitting
+      // interface declarations with the same names caused TS2308
+      // "already exported" errors when the consumer does
+      // `export * from "@workspace/api-zod"`.
+      schemas: false,
       mode: "split",
       clean: true,
       prettier: true,

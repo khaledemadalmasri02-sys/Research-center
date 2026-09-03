@@ -20,7 +20,6 @@ import backupRouter from "./backup";
 import analysisRouter from "./analysis";
 import tourConfigRouter from "./tour-config";
 import inboundEmailRouter from "./inbound-email";
-import { requireAdmin } from "../middlewares/requireAdmin";
 import { authenticateApiToken } from "../lib/apiToken";
 
 const router: IRouter = Router();

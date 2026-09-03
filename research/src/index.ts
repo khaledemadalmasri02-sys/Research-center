@@ -1,4 +1,4 @@
-import { Hono, Context } from "hono";
+import { Hono } from "hono";
 import PostalMime from "postal-mime";
 import { ensureSchema } from "./lib/db-bootstrap";
 import { consentApp } from "./routes/consent";

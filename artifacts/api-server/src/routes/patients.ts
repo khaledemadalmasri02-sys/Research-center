@@ -709,13 +709,22 @@ router.post("/patients/batch", async (req: Request, res: Response): Promise<void
         if (!parsed.success) {
           result.errors = [parsed.error.message];
         } else {
-  const [patient] = await db
-    .insert(patientsTable)
-    .values({
-      ...(sanitize(parsed.data as Record<string, unknown>) as typeof parsed.data),
-      userId: req.session?.userId ?? null,
-    })
-    .returning();
+          // Drizzle's InsertType requires non-null `patientId`, but
+          // the inferred type from zod is a Partial in some code
+          // paths. z.infer gives us the narrowed type.
+          type CreatePatientInput = {
+            patientId: string;
+            patientName: string;
+            [k: string]: unknown;
+          };
+          const data = parsed.data as unknown as CreatePatientInput;
+          const [patient] = await db
+            .insert(patientsTable)
+            .values({
+              ...data,
+              userId: req.session?.userId ?? null,
+            })
+            .returning();
           result.id = patient!.id;
           if (updatedPaths.length > 0) {
             result.updatedImagePaths = updatedPaths;

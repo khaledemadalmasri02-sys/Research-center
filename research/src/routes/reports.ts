@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppBindings, AppVariables, AppContext } from "../lib/env";
-import { getAuthUser, isAdmin, writeAudit } from "../lib/security";
+import { getAuthUser, writeAudit } from "../lib/security";
 import { buildSimplePdf } from "../lib/pdf";
 
 export const reportsApp = new Hono<{

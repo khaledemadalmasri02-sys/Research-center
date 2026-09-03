@@ -41,16 +41,6 @@ function isLocked(user: { lockedUntil: Date | null } | undefined): boolean {
   return new Date(user.lockedUntil).getTime() > Date.now();
 }
 
-function publicUser(u: { id: number; username: string; role: string; canAdminAccess: boolean; status: string }) {
-  return {
-    id: u.id,
-    username: u.username,
-    role: u.role,
-    canAdminAccess: u.canAdminAccess,
-    status: u.status,
-  };
-}
-
 router.post("/auth/login", async (req: Request, res: Response) => {
   const limit = rateLimit(`login:${clientIp(req)}`, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS);
   if (!limit.success) {
@@ -245,7 +235,6 @@ router.post("/auth/signup", async (req: Request, res: Response) => {
 });
 
 const OTP_TTL_MS = 10 * 60 * 1000; // 10 minutes
-const OTP_RESEND_WINDOW_MS = 30 * 1000; // client-enforced cooldown, also throttled here
 const OTP_MAX_ATTEMPTS = 5;
 
 /** Masks an email for safe display, e.g. "alex@example.com" -> "a***@e***". */

@@ -6,7 +6,6 @@ import {
   hashPassword,
   validUsername,
   strongPassword,
-  parseJsonArray,
   isUniqueViolation,
 } from "../lib/security";
 

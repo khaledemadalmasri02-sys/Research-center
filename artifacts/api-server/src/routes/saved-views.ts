@@ -109,7 +109,7 @@ router.delete("/saved-views/:id", requireAuth, async (req: Request, res: Respons
     res.status(400).json({ error: "Invalid id" });
     return;
   }
-  const result = await db
+  await db
     .delete(savedViewsTable)
     .where(and(eq(savedViewsTable.id, id), eq(savedViewsTable.userId, req.session.userId ?? 0)));
   res.json({ ok: true });

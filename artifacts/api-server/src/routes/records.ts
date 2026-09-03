@@ -10,7 +10,7 @@ import {
   type RecordFieldType,
 } from "@workspace/db";
 import { requireAuth } from "./auth";
-import { ensureUserPatientsDefinition, syncPatientsToCollection } from "../lib/patientsCollection";
+import { syncPatientsToCollection } from "../lib/patientsCollection";
 import { requireEdit } from "../middlewares/requireEdit";
 import { writeAudit, clientIp } from "../lib/audit";
 

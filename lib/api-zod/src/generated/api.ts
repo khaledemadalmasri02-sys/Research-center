@@ -328,7 +328,7 @@ export const RequestUploadUrlBody = zod.object({
 
 
 export const RequestUploadUrlResponse = zod.object({
-  "uploadURL": zod.string().url(),
+  "uploadURL": zod.url(),
   "objectPath": zod.string(),
   "metadata": zod.object({
   "name": zod.string().min(1),
@@ -360,7 +360,7 @@ export const EnsureBucketResponse = zod.object({
  * @summary Import an image from a URL into storage
  */
 export const ImportImageFromUrlBody = zod.object({
-  "url": zod.string().url(),
+  "url": zod.url(),
   "filename": zod.string().optional()
 })
 
@@ -374,7 +374,7 @@ export const ImportImageFromUrlResponse = zod.object({
  * @summary Import an image from a URL and associate with a patient
  */
 export const ImportImageByPatientBody = zod.object({
-  "url": zod.string().url(),
+  "url": zod.url(),
   "filename": zod.string().optional(),
   "patientId": zod.string().optional()
 })
@@ -461,7 +461,7 @@ export const AttachPatientImageByIdResponse = zod.object({
  */
 export const BatchImportImagesBody = zod.object({
   "patientId": zod.string().describe('Patient ID to attach images to'),
-  "imageUrls": zod.array(zod.string().url()).describe('List of image URLs to download and upload')
+  "imageUrls": zod.array(zod.url()).describe('List of image URLs to download and upload')
 })
 
 export const BatchImportImagesResponse = zod.object({

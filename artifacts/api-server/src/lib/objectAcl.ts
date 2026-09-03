@@ -1,5 +1,4 @@
 import type { S3Object } from "./objectStorage";
-import type { HeadObjectOutput, GetObjectOutput } from "@aws-sdk/client-s3";
 
 const ACL_POLICY_METADATA_KEY = "aclPolicy";
 
@@ -82,7 +81,7 @@ export async function setObjectAclPolicy(
 export async function getObjectAclPolicy(
   s3Object: S3Object
 ): Promise<ObjectAclPolicy | null> {
-  const { S3Client, GetObjectCommand, HeadObjectCommand } = await import("@aws-sdk/client-s3");
+  const { S3Client, HeadObjectCommand } = await import("@aws-sdk/client-s3");
   const client = new S3Client({});
 
   try {

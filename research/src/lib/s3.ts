@@ -112,7 +112,7 @@ export async function putObject(
   const bytes = body instanceof Uint8Array ? body : new Uint8Array(body);
   const payloadHash = await sha256Hex(bytes);
   const amz = amzDate(new Date());
-  const { authorization, signedHeaders } = await buildSignatureAsync(
+  const { authorization } = await buildSignatureAsync(
     config,
     target,
     "PUT",
@@ -195,7 +195,6 @@ export async function getPresignedUrl(
   }
 
   // Canonical request uses UNSIGNED-PAYLOAD for presigned URLs.
-  const headerKeys = ["host"];
   const canonicalHeaders = `host:${target.host}\n`;
   const signedHeaders = "host";
   const canonicalQuery = Object.keys(query)

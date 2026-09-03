@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response } from "express";
-import { desc, eq, and, isNull } from "drizzle-orm";
+import { desc, eq, and } from "drizzle-orm";
 import { db, apiTokensTable, API_TOKEN_SCOPES } from "@workspace/db";
 import { requireAuth } from "./auth";
 import { issueToken } from "../lib/apiToken";

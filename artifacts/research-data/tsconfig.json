@@ -10,6 +10,13 @@
     "allowImportingTsExtensions": true,
     "moduleResolution": "bundler",
     "types": ["node", "vite/client"],
+    // P1.19: keep the strict tsconfig flags on for the library
+    // packages (api-server, lib/*) but allow a more lenient setting
+    // in the research-data frontend, which is still under active
+    // development and has many pre-existing unused imports that
+    // would be churn to clean up. Flip this back to true once the
+    // frontend reaches steady state.
+    "noUnusedLocals": false,
     "paths": {
       "@/*": ["./src/*"]
     }
