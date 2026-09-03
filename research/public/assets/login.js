@@ -1,1 +1,0 @@
-import{j as o}from"./index.js";import{A as t}from"./auth.js";import"./input.js";import"./label.js";import"./mail.js";import"./arrow-right.js";import"./arrow-left.js";import"./eye.js";function u(){return o.jsx(t,{initialMode:"login"})}export{u as default};

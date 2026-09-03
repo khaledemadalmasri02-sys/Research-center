@@ -130,7 +130,7 @@ Generated from the full project analysis. Each item has: **priority**, **why it 
 **Scope:** Enable both; fix the (likely few) resulting errors.
 **Acceptance:** `pnpm typecheck` passes with stricter config.
 
-### 17. Delete legacy artifacts (partial)
+### 17. Delete legacy artifacts (partial) — **shipped 2026-09**
 **Why:** `artifacts/worker-api/` is still used by the admin root of the
 website (see `docs/architecture/routing.md`) — it cannot be deleted.
 `research/public-legacy/` is a committed backup of an old SPA bundle;
@@ -138,6 +138,16 @@ website (see `docs/architecture/routing.md`) — it cannot be deleted.
 build artefact committed by some flow. Scope: remove the truly-orphaned
 parts (public-legacy, mockup-sandbox, local-api, the public/ build
 artefacts) and document why worker-api stays.
+
+This PR ships the build-artefact half: `research/public/assets/*.js`,
+`*.css`, and `research/public/tour/*.mp4` (112 files, ~7.7 MB) are no
+longer tracked. The `.gitignore` rules are now correct, future builds
+will skip them automatically, and `scripts/research-deploy.sh` already
+runs the build before deploying. CI gains a `pnpm run build` step on
+`artifacts/research-data/` to fail fast on broken builds.
+
+`public-legacy`, `mockup-sandbox`, `local-api` left for a follow-up —
+the user wants to keep them in the tree for now.
 **Scope:** Remove or move to an `archive/` branch. Gitignore `research/public/**`. Remove from workspace `packages`.
 **Acceptance:** Repo size shrinks; build flow doesn't commit generated artefacts.
 
@@ -192,20 +202,72 @@ artefacts) and document why worker-api stays.
 
 ## P3 — Backlog (UX/Product)
 
-### 31. Accessibility audit
-Focus traps, ARIA on Ubuntu desktop windows, RTL flip on dock/wallpaper.
+### 31. Accessibility audit — **shipped 2026-09 (PR9)**
+Skip-to-content link, `<LiveRegion>` polite + assertive announcer,
+global `:focus-visible` ring, `aria-label` audit, `aria-live` on
+async states. Live regions wire to high-signal sounds (success /
+error / notification) so SR users get the same feedback as sighted
+users.
+Docs: `docs/motion.md`, `docs/sound.md`, `docs/design-tokens.md`.
 
-### 32. Theme-preset FOUC fix
-Inline `data-theme` script to avoid first-paint flash.
+### 32. Theme-preset FOUC fix — **shipped 2026-09 (PR1)**
+Inline `<script>` in both `index.html` files sets `data-theme`,
+`data-density`, `dir`, and `lang` before hydration. Kills the
+flash-of-wrong-theme on first paint.
 
-### 33. Virtualize analysis results tables
-TanStack Table + react-virtual for large analyses.
+### 33. Virtualize analysis results tables — **shipped 2026-09 (PR5)**
+`@tanstack/react-table` + `@tanstack/react-virtual` ship in the
+workspace catalog. `<DataTable>` exposes density toggle (compact /
+comfortable / spacious), column visibility, row selection, sticky
+header, 200 ms debounced search, persisted density + column
+visibility. Demo at `/data-table-demo`. Patients/activity tables
+still use bespoke code; migrate incrementally.
 
-### 34. DICOM viewer lite
-Thumbnail + metadata panel (cornerstone or similar). High research value.
+### 34. DICOM viewer lite — *not started*
+Thumbnail + metadata panel (cornerstone or similar). High research
+value.
 
-### 35. Cohort builder UI
+### 35. Cohort builder UI — *not started*
 `plan-spa.md` flags this as the highest research value — currently stub.
+
+---
+
+## P4 — Shipped (UX/Animation/Sound)
+
+The following were not in the original plan but shipped as part of
+the 2026-09 UI/UX pass.
+
+- **PR1 — Motion foundation.** Shimmer `<Skeleton>` (replaces
+  `animate-pulse`), `<AnimatedTabs>` with `layoutId` sliding pill,
+  inline data-theme FOUC script. Window open/close/focus/minimize
+  animations and dock stagger were already in place.
+- **PR2 — Command palette.** ⌘K / Ctrl-K (and `/`) global
+  `<CommandPalette>` (cmdk) with 27 nav items + actions + theme
+  toggle + sign-out, mounted in both classic and desktop shells.
+- **PR3 — Sound foundation.** `<SoundProvider>` (persisted
+  `app-sound-enabled`, default off, auto-off when
+  `prefers-reduced-motion`), Web Audio API primitives in
+  `lib/sfx.ts`, 17-sound map, `<SoundToggle>`, `M`-key master mute.
+  Wired into theme toggle, command palette, window open/close,
+  login success/fail, OTP resend.
+- **PR6 — Form UX.** `<LoadingButton>` (width-preserving),
+  `<PasswordInput>` (show/hide + 4-bar strength meter + error slot),
+  `<FormField>` (label + hint + error + aria-describedby, no RHF
+  coupling). Login + signup submit buttons migrated; signup password
+  now shows live strength.
+- **PR7 — Three-pane analysis layout.** `<ResizablePanelGroup>`
+  around the dataset view + variable palette, `autoSaveId` for
+  layout persistence, Collapse/Expand palette toggle, `<Stagger>`
+  reveal of cards.
+- **PR8 — Empty/loading/error states.** Six reusable state
+  components (`NoDataState`, `NoResultsState`, `EmptyInboxState`,
+  `ErrorState`, `NoPermissionState`, `LoadingState` with skeleton
+  mode). Analysis landing + orchestrator upgraded; i18n keys (en + ar).
+- **PR9 — A11y pass.** `<LiveRegion>` + announcer hook, `<SkipToContent>`,
+  global focus-visible ring, `aria-live` on toasts and async
+  actions, screen-reader announcements paired with high-signal sounds.
+- **PR10 — Docs.** `docs/design-tokens.md`, `docs/motion.md`,
+  `docs/sound.md`.
 
 ---
 
@@ -218,3 +280,8 @@ Thumbnail + metadata panel (cornerstone or similar). High research value.
 5. P0.5 — Drizzle migrations (do this before more schema changes accumulate)
 
 Each item is independent enough to be a separate PR. The todo list in `.kilo/agent/` tracks progress.
+
+For motion/sound/a11y guidance when extending the UI, see:
+- `docs/design-tokens.md` — colors, spacing, density, skeleton, glass.
+- `docs/motion.md` — durations, easings, stagger, reduced-motion.
+- `docs/sound.md` — sound map, opt-in policy, mute shortcut.

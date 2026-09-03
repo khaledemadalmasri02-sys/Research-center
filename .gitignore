@@ -78,6 +78,15 @@ artifacts/*/coverage/
 /.codegen-check/
 
 # Build artefacts (rebuilt on every deploy)
+# These directories are produced by `pnpm run build` inside
+# `artifacts/research-data/` and copied into `research/public/` by
+# `scripts/research-deploy.sh`. The Worker serves them directly via
+# the ASSETS binding. Track the inputs, not the outputs.
+#   - /research/public/assets/*.js   — Vite-bundled JS chunks
+#   - /research/public/assets/*.css  — Vite-bundled CSS
+#   - /research/public/tour/*.mp4     — remotion-rendered tour videos
+#   - /artifacts/research-data/public/tour/*.mp4 — remotion output
+#   - /artifacts/research-data/remotion/out/      — intermediate render
 /research/public/assets/*.js
 /research/public/assets/*.css
 /research/public/tour/*.mp4

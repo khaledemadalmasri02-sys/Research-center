@@ -1,1 +1,0 @@
-import{j as t}from"./index.js";import{A as i}from"./auth.js";import"./input.js";import"./label.js";import"./mail.js";import"./arrow-right.js";import"./arrow-left.js";import"./eye.js";function e(){return t.jsx(i,{initialMode:"signup"})}export{e as default};

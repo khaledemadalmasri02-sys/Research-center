@@ -27,6 +27,16 @@ jobs:
         run: npx tsx scripts/check-schema.ts
       - name: Test
         run: npx vitest run
+      # P1.20: build the SPA in CI to confirm the build pipeline is
+      # green. The Worker serves research/public/ via the ASSETS
+      # binding, so this is what gets deployed. We don't commit the
+      # build artefacts (see .gitignore); deploy scripts run the same
+      # build. This job catches "build is broken on main" early.
+      - name: Install frontend deps + build SPA
+        working-directory: artifacts/research-data
+        run: pnpm install --frozen-lockfile && BASE_PATH=/ pnpm run build
+        env:
+          BASE_PATH: /
 
   test-api-server:
     name: api-server
