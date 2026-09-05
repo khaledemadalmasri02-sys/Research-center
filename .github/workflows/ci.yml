@@ -37,6 +37,14 @@ jobs:
         run: pnpm install --frozen-lockfile && BASE_PATH=/ pnpm run build
         env:
           BASE_PATH: /
+      - name: Test frontend (lib tests)
+        # P2.1: pure-module tests for the research-data frontend
+        # library code (medical correction, vitals, radiology images,
+        # crash reporter, import filter). Uses node --test with the
+        # built-in TypeScript stripper, no jsdom needed because all
+        # targets are pure functions.
+        working-directory: artifacts/research-data
+        run: pnpm run test
 
   test-api-server:
     name: api-server
