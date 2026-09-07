@@ -1,14 +1,60 @@
 #!/usr/bin/env bash
-# Pre-commit hook: scan staged files with gitleaks.
+# Pre-commit hook. Two checks:
+#   1. gitleaks secret scan on staged files (P0.1).
+#   2. OpenAPI codegen drift check (P2.8) when relevant files are
+#      staged — i.e. openapi.yaml or anything under
+#      lib/api-client-react/src/generated/.
+#
 # Install: git config core.hooksPath .githooks
+#
+# The codegen check runs orval in a sandboxed config and diffs the
+# output against the committed `lib/api-client-react/src/generated/`.
+# It is a few-second check, so we run it inline. If pnpm is not
+# installed, we skip the codegen check (CI will catch it).
 
 set -euo pipefail
 
-if ! command -v gitleaks >/dev/null 2>&1; then
-  echo "gitleaks not found in PATH; skipping secret scan."
-  echo "Install: https://github.com/gitleaks/gitleaks/releases"
+# ----- 1. gitleaks ---------------------------------------------------------
+
+if command -v gitleaks >/dev/null 2>&1; then
+  echo "[pre-commit] Running gitleaks on staged files..."
+  gitleaks protect --no-banner --config .gitleaks.toml --staged --redact
+else
+  echo "[pre-commit] gitleaks not found in PATH; skipping secret scan."
+  echo "             Install: https://github.com/gitleaks/gitleaks/releases"
+fi
+
+# ----- 2. OpenAPI codegen drift -------------------------------------------
+
+# Check whether any staged file would invalidate the generated clients.
+codegen_relevant_pattern='^(lib/api-spec/openapi\.yaml|lib/api-client-react/src/generated/.*|lib/api-spec/orval\.config\.ts|lib/api-client-react/src/custom-fetch\.ts)$'
+staged_codegen_files=$(git diff --cached --name-only | grep -E "$codegen_relevant_pattern" || true)
+
+if [ -z "$staged_codegen_files" ]; then
+  echo "[pre-commit] No OpenAPI/codegen files staged; skipping drift check."
   exit 0
 fi
 
-echo "[pre-commit] Running gitleaks on staged files..."
-gitleaks protect --no-banner --config .gitleaks.toml --staged --redact
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo "[pre-commit] pnpm not found in PATH; skipping OpenAPI drift check (CI will catch it)."
+  exit 0
+fi
+
+echo "[pre-commit] OpenAPI/codegen files staged; running drift check..."
+echo "             Staged:"
+echo "$staged_codegen_files" | sed 's/^/               /'
+# Make sure node_modules is present (skip quietly if the developer has
+# not run pnpm install yet).
+if [ ! -d "node_modules" ] && [ ! -d "lib/api-spec/node_modules" ]; then
+  echo "[pre-commit] node_modules not found; skipping OpenAPI drift check (CI will catch it)."
+  exit 0
+fi
+
+if pnpm -F @workspace/api-spec codegen:check; then
+  echo "[pre-commit] OpenAPI codegen drift check: OK."
+else
+  echo ""
+  echo "[pre-commit] OpenAPI codegen drift check FAILED."
+  echo "             Run 'pnpm -F @workspace/api-spec codegen' and commit the result."
+  exit 1
+fi
