@@ -3,39 +3,32 @@ import { desc, eq } from "drizzle-orm";
 import { db, feedbackTable, usersTable } from "@workspace/db";
 import { writeAudit, clientIp } from "../lib/audit";
 import { notify } from "../lib/notifications";
+import { validate, z } from "../lib/validate";
 
 const router: IRouter = Router();
 
-const ALLOWED_TYPES = new Set(["general", "bug", "feature", "complaint", "praise"]);
 const MAX_MESSAGE = 5000;
 
+const SubmitFeedbackBody = z.object({
+  type: z.enum(["general", "bug", "feature", "complaint", "praise"]).optional(),
+  message: z.string().trim().min(1).max(MAX_MESSAGE),
+  rating: z.number().int().min(1).max(5).nullable().optional(),
+});
+
+const ReviewFeedbackParams = z.object({
+  id: z.coerce.number().int().positive(),
+});
+
 // Submit feedback (any authenticated user)
-router.post("/feedback", async (req: Request, res: Response) => {
-  const { type, message, rating } = req.body as {
-    type?: string;
-    message?: string;
-    rating?: number;
-  };
-
-  if (typeof message !== "string" || !message.trim()) {
-    res.status(400).json({ error: "Message is required." });
-    return;
-  }
-  if (message.length > MAX_MESSAGE) {
-    res.status(400).json({ error: `Message must be at most ${MAX_MESSAGE} characters.` });
-    return;
-  }
-  const safeType = ALLOWED_TYPES.has(type ?? "") ? (type as string) : "general";
-
-  let safeRating: number | null = null;
-  if (rating !== undefined && rating !== null) {
-    const n = Number(rating);
-    if (!Number.isInteger(n) || n < 1 || n > 5) {
-      res.status(400).json({ error: "Rating must be an integer between 1 and 5." });
-      return;
-    }
-    safeRating = n;
-  }
+router.post(
+  "/feedback",
+  validate({ body: SubmitFeedbackBody }),
+  async (req: Request, res: Response) => {
+    const { type, message, rating } = req.validated!.body as z.infer<typeof SubmitFeedbackBody>;
+    // The schema already whitelists the type, so no fallback needed; default
+    // to "general" when the client omits it.
+    const safeType = type ?? "general";
+    const safeRating = rating ?? null;
 
   const [created] = await db
     .insert(feedbackTable)
@@ -85,57 +78,57 @@ router.get("/feedback", async (req: Request, res: Response) => {
 });
 
 // Mark feedback as reviewed (admin only)
-router.patch("/feedback/:id/review", async (req: Request, res: Response) => {
-  if (!req.session.canAdminAccess) {
-    res.status(403).json({ error: "Admin access required." });
-    return;
-  }
+router.patch(
+  "/feedback/:id/review",
+  validate({ params: ReviewFeedbackParams }),
+  async (req: Request, res: Response) => {
+    if (!req.session.canAdminAccess) {
+      res.status(403).json({ error: "Admin access required." });
+      return;
+    }
 
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+    const { id } = req.validated!.params as z.infer<typeof ReviewFeedbackParams>;
 
-  const [existing] = await db.select().from(feedbackTable).where(eq(feedbackTable.id, id)).limit(1);
-  if (!existing) {
-    res.status(404).json({ error: "Feedback not found." });
-    return;
-  }
+    const [existing] = await db.select().from(feedbackTable).where(eq(feedbackTable.id, id)).limit(1);
+    if (!existing) {
+      res.status(404).json({ error: "Feedback not found." });
+      return;
+    }
 
-  const [updated] = await db
-    .update(feedbackTable)
-    .set({ status: "reviewed" })
-    .where(eq(feedbackTable.id, id))
-    .returning({ id: feedbackTable.id, status: feedbackTable.status });
+    const [updated] = await db
+      .update(feedbackTable)
+      .set({ status: "reviewed" })
+      .where(eq(feedbackTable.id, id))
+      .returning({ id: feedbackTable.id, status: feedbackTable.status });
 
-  await writeAudit({
-    userId: req.session.userId ?? null,
-    action: "feedback.review",
-    entity: "feedback",
-    entityId: id,
-    ip: clientIp(req),
-  });
+    await writeAudit({
+      userId: req.session.userId ?? null,
+      action: "feedback.review",
+      entity: "feedback",
+      entityId: id,
+      ip: clientIp(req),
+    });
 
-  if (existing.userId) {
-    const [author] = await db
-      .select({ email: usersTable.email })
-      .from(usersTable)
-      .where(eq(usersTable.id, existing.userId))
-      .limit(1);
-    await notify(
-      existing.userId,
-      {
-        type: "feedback.reviewed",
-        title: "Your feedback was reviewed",
-        body: "An admin has reviewed the feedback you submitted. Thank you!",
-        link: "/feedback",
-      },
-      author?.email,
-    );
-  }
+    if (existing.userId) {
+      const [author] = await db
+        .select({ email: usersTable.email })
+        .from(usersTable)
+        .where(eq(usersTable.id, existing.userId))
+        .limit(1);
+      await notify(
+        existing.userId,
+        {
+          type: "feedback.reviewed",
+          title: "Your feedback was reviewed",
+          body: "An admin has reviewed the feedback you submitted. Thank you!",
+          link: "/feedback",
+        },
+        author?.email,
+      );
+    }
 
-  res.json({ ok: true, feedback: updated });
-});
+    res.json({ ok: true, feedback: updated });
+  },
+);
 
 export default router;

@@ -6,11 +6,33 @@ import { requireAdmin } from "../middlewares/requireAdmin";
 import { writeAudit, clientIp } from "../lib/audit";
 import { notify } from "../lib/notifications";
 import { sendEmail } from "../lib/email";
+import { validate, z } from "../lib/validate";
 
 const router: IRouter = Router();
 
-const ALLOWED_ROLES = new Set(["admin", "editor", "viewer"]);
-const ALLOWED_STATUSES = new Set(["active", "pending", "suspended"]);
+const SignupIdParams = z.object({ id: z.coerce.number().int().positive() });
+const UserIdParams = z.object({ id: z.coerce.number().int().positive() });
+
+const CreateUserBody = z.object({
+  username: z.string().trim().min(1).max(64),
+  password: z.string().min(1).max(256),
+  fullName: z.string().max(200).optional(),
+  email: z.string().email().max(320).optional().or(z.literal("")),
+  role: z.enum(["admin", "editor", "viewer"]).optional(),
+  canAdminAccess: z.boolean().optional(),
+});
+
+const UpdateUserBody = z
+  .object({
+    role: z.enum(["admin", "editor", "viewer"]).optional(),
+    canAdminAccess: z.boolean().optional(),
+    status: z.enum(["active", "pending", "suspended"]).optional(),
+  })
+  .refine(
+    (v) =>
+      v.role !== undefined || v.canAdminAccess !== undefined || v.status !== undefined,
+    { message: "At least one of role, canAdminAccess, status must be provided" },
+  );
 
 function isUniqueViolation(e: unknown): boolean {
   return (e as { code?: string })?.code === "23505";
@@ -29,12 +51,12 @@ router.get("/signups", requireAdmin, async (_req: Request, res: Response) => {
 });
 
 // Approve a sign-up request -> creates a website-only user account
-router.post("/signups/:id/approve", requireAdmin, async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+router.post(
+  "/signups/:id/approve",
+  requireAdmin,
+  validate({ params: SignupIdParams }),
+  async (req: Request, res: Response) => {
+    const { id } = req.validated!.params as z.infer<typeof SignupIdParams>;
 
   const [request] = await db.select().from(signupRequestsTable).where(eq(signupRequestsTable.id, id)).limit(1);
   if (!request) {
@@ -116,12 +138,12 @@ router.post("/signups/:id/approve", requireAdmin, async (req: Request, res: Resp
 });
 
 // Reject a sign-up request
-router.post("/signups/:id/reject", requireAdmin, async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+router.post(
+  "/signups/:id/reject",
+  requireAdmin,
+  validate({ params: SignupIdParams }),
+  async (req: Request, res: Response) => {
+    const { id } = req.validated!.params as z.infer<typeof SignupIdParams>;
 
   const [request] = await db.select().from(signupRequestsTable).where(eq(signupRequestsTable.id, id)).limit(1);
   if (!request) {
@@ -176,27 +198,20 @@ router.get("/users", requireAdmin, async (_req: Request, res: Response) => {
 });
 
 // Admin directly creates a user (e.g. another admin)
-router.post("/users", requireAdmin, async (req: Request, res: Response) => {
-  const { username, password, fullName, email, role, canAdminAccess } = req.body as {
-    username?: string;
-    password?: string;
-    fullName?: string;
-    email?: string;
-    role?: string;
-    canAdminAccess?: boolean;
-  };
-
-  if (!username || !password) {
-    res.status(400).json({ error: "Username and password are required." });
-    return;
-  }
-  const pwCheck = isValidPassword(password);
-  if (!pwCheck.ok) {
-    res.status(400).json({ error: pwCheck.reason });
-    return;
-  }
-  const safeRole = ALLOWED_ROLES.has(role ?? "") ? (role as string) : "editor";
-  const safeCanAdmin = safeRole === "admin" ? Boolean(canAdminAccess) : false;
+router.post(
+  "/users",
+  requireAdmin,
+  validate({ body: CreateUserBody }),
+  async (req: Request, res: Response) => {
+    const { username, password, fullName, email, role, canAdminAccess } =
+      req.validated!.body as z.infer<typeof CreateUserBody>;
+    const pwCheck = isValidPassword(password);
+    if (!pwCheck.ok) {
+      res.status(400).json({ error: pwCheck.reason });
+      return;
+    }
+    const safeRole = role ?? "editor";
+    const safeCanAdmin = safeRole === "admin" ? Boolean(canAdminAccess) : false;
 
   const [existing] = await db.select({ id: usersTable.id }).from(usersTable).where(eq(usersTable.username, username)).limit(1);
   if (existing) {
@@ -253,33 +268,19 @@ router.post("/users", requireAdmin, async (req: Request, res: Response) => {
 });
 
 // Update a user (role, admin access, status)
-router.patch("/users/:id", requireAdmin, async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+router.patch(
+  "/users/:id",
+  requireAdmin,
+  validate({ params: UserIdParams, body: UpdateUserBody }),
+  async (req: Request, res: Response) => {
+    const { id } = req.validated!.params as z.infer<typeof UserIdParams>;
+    const { role, canAdminAccess, status } = req.validated!.body as z.infer<typeof UpdateUserBody>;
 
-  const { role, canAdminAccess, status } = req.body as {
-    role?: string;
-    canAdminAccess?: boolean;
-    status?: string;
-  };
-
-  if (role !== undefined && !ALLOWED_ROLES.has(role)) {
-    res.status(400).json({ error: "Invalid role." });
-    return;
-  }
-  if (status !== undefined && !ALLOWED_STATUSES.has(status)) {
-    res.status(400).json({ error: "Invalid status." });
-    return;
-  }
-
-  const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
-  if (!target) {
-    res.status(404).json({ error: "User not found." });
-    return;
-  }
+    const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
+    if (!target) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
 
   // Prevent self-lockout / privilege loss for the acting admin.
   if (target.id === req.session.userId) {
@@ -327,16 +328,16 @@ router.patch("/users/:id", requireAdmin, async (req: Request, res: Response) => 
 });
 
 // Delete a user (cannot delete self or the last admin)
-router.delete("/users/:id", requireAdmin, async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
-  if (id === req.session.userId) {
-    res.status(400).json({ error: "You cannot delete your own account." });
-    return;
-  }
+router.delete(
+  "/users/:id",
+  requireAdmin,
+  validate({ params: UserIdParams }),
+  async (req: Request, res: Response) => {
+    const { id } = req.validated!.params as z.infer<typeof UserIdParams>;
+    if (id === req.session.userId) {
+      res.status(400).json({ error: "You cannot delete your own account." });
+      return;
+    }
 
   const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
   if (!target) {
@@ -368,12 +369,12 @@ router.delete("/users/:id", requireAdmin, async (req: Request, res: Response) =>
 
 // User data drill-down (admin only): the user's profile, the collections they
 // own/created, and a sample of their records.
-router.get("/users/:id/data", requireAdmin, async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+router.get(
+  "/users/:id/data",
+  requireAdmin,
+  validate({ params: UserIdParams }),
+  async (req: Request, res: Response) => {
+    const { id } = req.validated!.params as z.infer<typeof UserIdParams>;
 
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
   if (!user) {

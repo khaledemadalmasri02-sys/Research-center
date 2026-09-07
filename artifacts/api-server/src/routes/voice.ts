@@ -2,12 +2,24 @@ import { Router } from "express";
 import multer from "multer";
 import OpenAI, { toFile } from "openai";
 import express from "express";
+import { validate, z } from "../lib/validate";
 
 const router = Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024 }, // 25 MB
+});
+
+const CorrectBody = z.object({
+  text: z.string().max(20_000).default(""),
+});
+
+const TranscribeQuery = z.object({
+  lang: z
+    .string()
+    .regex(/^[a-z]{2,3}(-[A-Z]{2})?$/, "lang must be an ISO-639-1 or BCP-47 code")
+    .optional(),
 });
 
 // ── Groq client — Whisper Large V3 transcription ──────────────────────────────
@@ -57,6 +69,7 @@ If there are no corrections, return an empty array for "corrections".`;
 router.post(
   "/voice/transcribe",
   upload.single("audio"),
+  validate({ query: TranscribeQuery }),
   async (req, res): Promise<void> => {
     if (!req.file) {
       res.status(400).json({ error: "No audio file uploaded" });
@@ -84,7 +97,7 @@ router.post(
       const audioFile = await toFile(req.file.buffer, `recording.${ext}`, { type: mime });
 
       // Language hint from query param — Groq/Whisper auto-detects if omitted
-      const lang = (req.query.lang as string | undefined) ?? undefined;
+      const { lang } = req.validated!.query as z.infer<typeof TranscribeQuery>;
 
       const transcription = await (groq.audio.transcriptions.create as Function)({
         file:     audioFile,
@@ -109,8 +122,10 @@ router.post(
 router.post(
   "/voice/correct",
   express.json(),
+  validate({ body: CorrectBody }),
   async (req, res): Promise<void> => {
-    const text = (req.body?.text ?? "").toString().trim();
+    const { text: rawText } = req.validated!.body as z.infer<typeof CorrectBody>;
+    const text = rawText.trim();
     if (!text) {
       res.json({ corrected: "", corrections: [] });
       return;

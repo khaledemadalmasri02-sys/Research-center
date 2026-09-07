@@ -1,32 +1,31 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { validate, z } from "../lib/validate";
 
 const router: IRouter = Router();
+
+const InboundEmailBody = z.object({
+  from: z.string().trim().min(1).max(320),
+  to: z.string().trim().min(1).max(320),
+  subject: z.string().max(998).optional(),
+  text: z.string().max(200_000).optional(),
+  html: z.string().max(500_000).optional(),
+  messageId: z.string().max(998).optional(),
+  inReplyTo: z.string().max(998).optional(),
+});
 
 // Receives parsed inbound email from the Cloudflare `research` Worker's Email
 // Routing handler. Authenticated with a shared INBOUND_EMAIL_SECRET (set as a
 // Worker secret and an api-server env var) so only Cloudflare can post here.
-router.post("/", async (req, res) => {
+router.post("/", validate({ body: InboundEmailBody }), async (req, res) => {
   const secret = process.env.INBOUND_EMAIL_SECRET;
   if (!secret || req.header("x-inbound-email-secret") !== secret) {
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  const body = req.body ?? {};
-  const { from, to, subject, text, html, messageId, inReplyTo } = body as {
-    from?: string;
-    to?: string;
-    subject?: string;
-    text?: string;
-    html?: string;
-    messageId?: string;
-    inReplyTo?: string;
-  };
-
-  if (!from || !to) {
-    return res.status(400).json({ error: "missing from/to" });
-  }
+  const { from, to, subject, text, html, messageId, inReplyTo } = req.validated!
+    .body as z.infer<typeof InboundEmailBody>;
 
   try {
     const { rows } = await pool.query<{ id: number }>(

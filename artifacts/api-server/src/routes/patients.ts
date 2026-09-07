@@ -20,6 +20,7 @@ import { writeAudit, clientIp } from "../lib/audit";
 
 // ---- SSRF guard (shared, see lib/ssrf.ts) -----------------------------------
 import { safeFetch } from "../lib/ssrf";
+import { validate, z } from "../lib/validate";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
@@ -385,29 +386,21 @@ router.get("/patients/:id/images", async (req, res): Promise<void> => {
   res.json({ patientId: patient.patientId, images });
 });
 
-router.post("/patients/:id/images", async (req, res): Promise<void> => {
-  const params = GetPatientParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
+router.post("/patients/:id/images", validate({ params: GetPatientParams, body: AddImagesBody }), async (req, res): Promise<void> => {
+  const params = GetPatientParams.parse(req.params);
+  const body = req.validated?.body as z.infer<typeof AddImagesBody>;
 
   const [patient] = await db
     .select()
     .from(patientsTable)
-    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
+    .where(and(eq(patientsTable.id, params.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
   if (!patient) {
     res.status(404).json({ error: "Patient not found" });
     return;
   }
 
-  const { imageId, objectKeys, objectKey, studyId } = req.body as {
-    imageId?: string;
-    objectKeys?: string[];
-    objectKey?: string;
-    studyId?: string;
-  };
+  const { imageId, objectKeys, objectKey, studyId } = body;
 
   let keys: string[] = [];
   if (Array.isArray(objectKeys) && objectKeys.length > 0) {
@@ -432,7 +425,7 @@ router.post("/patients/:id/images", async (req, res): Promise<void> => {
   const [updatedPatient] = await db
     .select()
     .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
+    .where(eq(patientsTable.id, params.id));
 
   res.json({
     ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
@@ -440,45 +433,41 @@ router.post("/patients/:id/images", async (req, res): Promise<void> => {
   });
 });
 
-router.delete("/patients/:id/images/:imageId", async (req, res): Promise<void> => {
-  const params = GetPatientParams.safeParse(req.params);
-  if (!params.success) {
-    res.status(400).json({ error: params.error.message });
-    return;
-  }
-  const imageId = Number(req.params.imageId);
-  if (!Number.isInteger(imageId)) {
-    res.status(400).json({ error: "Invalid image id" });
-    return;
-  }
+router.delete(
+  "/patients/:id/images/:imageId",
+  validate({ params: DeleteImageParams, query: DeleteImageQuery, body: DeleteImageBody }),
+  async (req, res): Promise<void> => {
+    const params = DeleteImageParams.parse(req.params);
+    const deleteObject =
+      req.query.deleteObject === "true" ||
+      req.query.deleteObject === "1" ||
+      (req.validated?.body as { deleteObject?: boolean } | undefined)?.deleteObject === true;
 
-  const [patient] = await db
-    .select()
-    .from(patientsTable)
-    .where(and(eq(patientsTable.id, params.data.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
+    const [patient] = await db
+      .select()
+      .from(patientsTable)
+      .where(and(eq(patientsTable.id, params.id), eq(patientsTable.userId, req.session?.userId ?? 0)));
 
-  if (!patient) {
-    res.status(404).json({ error: "Patient not found" });
-    return;
-  }
+    if (!patient) {
+      res.status(404).json({ error: "Patient not found" });
+      return;
+    }
 
-  const deleteObject =
-    req.query.deleteObject === "true" || (req.body as { deleteObject?: boolean })?.deleteObject === true;
+    await radiologyImageService.removeImage(params.imageId, { deleteObject });
 
-  await radiologyImageService.removeImage(imageId, { deleteObject });
+    const images = await radiologyImageService.listImages(patient.id);
 
-  const images = await radiologyImageService.listImages(patient.id);
+    const [updatedPatient] = await db
+      .select()
+      .from(patientsTable)
+      .where(eq(patientsTable.id, params.id));
 
-  const [updatedPatient] = await db
-    .select()
-    .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
-
-  res.json({
-    ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
-    images,
-  });
-});
+    res.json({
+      ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
+      images,
+    });
+  },
+);
 
 router.patch("/patients/:id", async (req, res): Promise<void> => {
   const params = UpdatePatientParams.safeParse(req.params);
@@ -522,15 +511,13 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
   res.json(UpdatePatientResponse.parse(await serializePatientWithImages(patient)));
 });
 
-router.post("/patients/batch-import-images", async (req: Request, res: Response): Promise<void> => {
-  const { patientId, imageUrls } = req.body as { patientId?: string; imageUrls?: string[] };
-  
-  if (!patientId || !Array.isArray(imageUrls) || imageUrls.length === 0) {
-    res.status(400).json({ error: "patientId and imageUrls are required" });
-    return;
-  }
+router.post(
+  "/patients/batch-import-images",
+  validate({ body: BatchImportImagesBody }),
+  async (req: Request, res: Response): Promise<void> => {
+    const { patientId, imageUrls } = req.validated!.body as z.infer<typeof BatchImportImagesBody>;
 
-  try {
+    try {
     const [patient] = await db
       .select()
       .from(patientsTable)
@@ -634,20 +621,14 @@ function guessExtension(url: string, contentType: string | null): string {
   return "jpg";
 }
 
-interface BatchPatientImportData {
-  patients: Record<string, unknown>[];
-}
+router.post(
+  "/patients/batch",
+  validate({ body: BatchImportBody }),
+  async (req: Request, res: Response): Promise<void> => {
+    const { patients } = req.validated!.body as z.infer<typeof BatchImportBody>;
 
-router.post("/patients/batch", async (req: Request, res: Response): Promise<void> => {
-  const { patients } = req.body as BatchPatientImportData;
-  
-  if (!Array.isArray(patients) || patients.length === 0) {
-    res.status(400).json({ error: "patients array is required" });
-    return;
-  }
-
-  const results: { id?: number; errors?: string[]; updatedImagePaths?: string[] }[] = [];
-  const batchSize = 5;
+    const results: { id?: number; errors?: string[]; updatedImagePaths?: string[] }[] = [];
+    const batchSize = 5;
   
   for (let i = 0; i < patients.length; i += batchSize) {
     const batch = patients.slice(i, i + batchSize);
@@ -749,6 +730,45 @@ const MAX_IMAGE_BYTES = 20 * 1024 * 1024; // 20 MB cap
 const FETCH_TIMEOUT_MS = 15_000;
 // Only these image MIME types are accepted; SVG/XML are rejected to prevent XSS.
 const ALLOWED_IMAGE_CONTENT_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+const AddImagesBody = z
+  .object({
+    imageId: z.string().min(1).max(64).optional(),
+    objectKey: z.string().min(1).max(512).optional(),
+    objectKeys: z.array(z.string().min(1).max(512)).max(50).optional(),
+    studyId: z.string().min(1).max(64).nullable().optional(),
+  })
+  .refine(
+    (v) => Boolean(v.imageId) || Boolean(v.objectKey) || (Array.isArray(v.objectKeys) && v.objectKeys.length > 0),
+    { message: "imageId, objectKey, or objectKeys is required" },
+  );
+
+const DeleteImageParams = z.object({
+  id: z.coerce.number().int().positive(),
+  imageId: z.coerce.number().int().positive(),
+});
+
+const DeleteImageQuery = z
+  .object({
+    deleteObject: z
+      .union([z.literal("true"), z.literal("false"), z.literal("1"), z.literal("0")])
+      .optional(),
+  });
+
+const DeleteImageBody = z
+  .object({
+    deleteObject: z.boolean().optional(),
+  })
+  .optional();
+
+const BatchImportImagesBody = z.object({
+  patientId: z.string().min(1).max(64),
+  imageUrls: z.array(z.string().url().max(2048)).min(1).max(50),
+});
+
+const BatchImportBody = z.object({
+  patients: z.array(z.record(z.string(), z.unknown())).min(1).max(500),
+});
 
 async function fetchAndUploadImage(url: string, patientId: string | undefined, patientName: string | undefined): Promise<string | null> {
   let parsed: URL;

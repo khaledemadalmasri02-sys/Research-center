@@ -1,8 +1,13 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { requireAuth } from "./auth";
+import { validate, z } from "../lib/validate";
 
 const router: IRouter = Router();
+
+const SidParams = z.object({
+  sid: z.string().min(1).max(256),
+});
 
 router.get("/sessions", requireAuth, async (req: Request, res: Response) => {
   const userId = req.session.userId ?? 0;
@@ -23,19 +28,24 @@ router.get("/sessions", requireAuth, async (req: Request, res: Response) => {
   res.json({ sessions });
 });
 
-router.delete("/sessions/:sid", requireAuth, async (req: Request, res: Response) => {
-  const sid = req.params.sid;
-  const currentSid = (req as Request & { sessionID: string }).sessionID;
-  if (sid === currentSid) {
-    res.status(400).json({ error: "Cannot revoke the current session." });
-    return;
-  }
-  await pool.query(`DELETE FROM "session" WHERE "sid" = $1 AND "sess"->>'userId' = $2`, [
-    sid,
-    String(req.session.userId ?? 0),
-  ]);
-  res.json({ ok: true });
-});
+router.delete(
+  "/sessions/:sid",
+  requireAuth,
+  validate({ params: SidParams }),
+  async (req: Request, res: Response) => {
+    const { sid } = req.validated!.params as z.infer<typeof SidParams>;
+    const currentSid = (req as Request & { sessionID: string }).sessionID;
+    if (sid === currentSid) {
+      res.status(400).json({ error: "Cannot revoke the current session." });
+      return;
+    }
+    await pool.query(`DELETE FROM "session" WHERE "sid" = $1 AND "sess"->>'userId' = $2`, [
+      sid,
+      String(req.session.userId ?? 0),
+    ]);
+    res.json({ ok: true });
+  },
+);
 
 router.delete("/sessions", requireAuth, async (req: Request, res: Response) => {
   const currentSid = (req as Request & { sessionID: string }).sessionID;
