@@ -2,6 +2,13 @@
 
 Generated from the full project analysis. Each item has: **priority**, **why it matters**, **scope of work**, **acceptance criteria**, and **status**.
 
+> **This plan is the *backlog*.** The maintained record of what's actually shipped lives in:
+> - [`CHANGELOG.md`](CHANGELOG.md) — every released change, Keep-a-Changelog format.
+> - [`STATUS.md`](STATUS.md) — top-level project status and pointers to per-package docs.
+> - [`artifacts/api-server/STATUS.md`](artifacts/api-server/STATUS.md), [`research/STATUS.md`](research/STATUS.md), [`artifacts/research-data/STATUS.md`](artifacts/research-data/STATUS.md) — per-package status, known issues, where to start.
+>
+> When you mark an item done here, also add a bullet to `CHANGELOG.md` and update the relevant `STATUS.md`.
+
 **Priority legend**
 - **P0** — security, compliance, or correctness blockers. Do this week.
 - **P1** — high-impact quality/scalability work. Do this month.
