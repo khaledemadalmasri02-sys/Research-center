@@ -1,15 +1,15 @@
-import { useState, useMemo, useRef, useEffect } from "react";
+import { useState, useMemo, useRef, useEffect, useDeferredValue, useTransition } from "react";
 import { useQuery, useMutation, useQueryClient, useQueries } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataTable } from "@/components/ui/data-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
+import { DestructiveActionButton, ConfirmDestructive } from "@/components/confirm-destructive";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Search, Plus, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, ImageOff, Pencil, Eye, FileSpreadsheet, Download, Archive, Loader2, FileJson, Upload, Image as ImageIcon, Database, Check, Layers } from "lucide-react";
+import { Search, Plus, Trash2, ImageOff, Pencil, Eye, FileSpreadsheet, Download, Archive, Loader2, FileJson, Upload, Image as ImageIcon, Layers, Box, ChevronDown, Check } from "lucide-react";
+import type { ColumnDef } from "@tanstack/react-table";
 import { format } from "date-fns";
 import { recordsApi, useActiveDefinition, type FieldDef, type RecordDefinition } from "@/lib/records";
 import { PATIENTS_DEFINITION_NAME } from "@/lib/records";
@@ -21,6 +21,11 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { normalizeRadiologyImages, resolveImageSrc } from "@/lib/radiology-images";
 import { useDesktopNav } from "@/lib/desktop-nav";
+import { useTranslation } from "react-i18next";
+import { useLiveAnnouncer } from "@/components/live-region";
+import { ErrorState, NoDataState } from "@/components/ui/states";
+import { CrossFade, FadeIn } from "@/lib/page-motion";
+import { Skeleton } from "@/components/ui/skeleton";
 
 type PatientRow = {
   id: number;
@@ -47,13 +52,16 @@ function resolveFirstImageSrc(images?: string | null | string[]): string | null 
 }
 
 function RadiologyThumb({ images }: { images?: string | null | string[] }) {
+  const { t } = useTranslation();
   const src = resolveFirstImageSrc(images);
-  if (!src) return <span className="text-muted-foreground/40"><ImageOff className="w-5 h-5" /></span>;
+  if (!src) return <span className="text-muted-foreground/40"><ImageOff className="w-5 h-5" aria-hidden /></span>;
   return (
     <img
       src={src}
-      alt="Radiology"
-      className="w-12 h-12 object-cover rounded border bg-muted"
+      alt={t("patients.thumbAlt")}
+      loading="lazy"
+      decoding="async"
+      className="h-12 w-12 object-cover rounded border bg-muted"
       onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
     />
   );
@@ -63,10 +71,10 @@ function TypeBadge({ type }: { type?: string }) {
   if (!type) return <span className="text-muted-foreground">—</span>;
   const cls =
     type === "Normal"
-      ? "bg-green-100 text-green-800"
+      ? "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200"
       : type === "Abnormal"
-      ? "bg-red-100 text-red-800"
-      : "bg-yellow-100 text-yellow-800";
+      ? "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200"
+      : "bg-yellow-100 text-yellow-900 dark:bg-yellow-950 dark:text-yellow-200";
   return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{type}</span>;
 }
 
@@ -78,6 +86,8 @@ function renderCell(value: unknown) {
 }
 
 export default function Patients() {
+  const { t } = useTranslation();
+  const { announce } = useLiveAnnouncer();
   const { data: def } = useActiveDefinition();
   const activeDefId = def?.id;
   const dn = useDesktopNav();
@@ -151,6 +161,11 @@ export default function Patients() {
   });
 
   const isLoading = recordResults.some((r) => r.isLoading);
+  const isFetchingMore = recordResults.some((r) => r.isFetching);
+  const loadErrors = recordResults
+    .filter((r) => r.isError)
+    .map((r) => (r.error as Error | null)?.message ?? t("common.errorTitle"));
+  const isError = loadErrors.length > 0;
 
   const rows: PatientRow[] = useMemo(() => {
     const list: PatientRow[] = [];
@@ -170,13 +185,17 @@ export default function Patients() {
   }, [recordResults, defMap]);
 
   const [search, setSearch] = useState("");
+  /* Filtering runs over every field of every record; keep the input
+   * responsive by rendering the deferred value. Without this the directory
+   * janked on every keystroke once a few thousand records were loaded. */
+  const deferredSearch = useDeferredValue(search);
+  const [isFiltering, startFiltering] = useTransition();
   const [sexFilter, setSexFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<string>("createdAt");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [isDeletingSelected, setIsDeletingSelected] = useState(false);
   const [rowToDelete, setRowToDelete] = useState<number | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [excelOpen, setExcelOpen] = useState(false);
   const [imageImportOpen, setImageImportOpen] = useState(false);
   const [isZipExporting, setIsZipExporting] = useState(false);
@@ -209,20 +228,26 @@ export default function Patients() {
 
   async function handleExportExcel() {
     if (exportTarget.length === 0) {
-      toast({ title: "Nothing to export", variant: "destructive" });
+      toast({ title: t("patients.nothingToExport"), variant: "destructive" });
       return;
     }
     try {
-      await exportToExcel(exportTarget.map((r) => toExportPatient(r)) as unknown as ExportPatient[], selectedDefs[0]?.name ?? "patients");
-      toast({ title: "Export complete", description: `${exportTarget.length} record(s) exported.` });
+      await exportToExcel(
+        exportTarget.map((r) => toExportPatient(r)) as unknown as ExportPatient[],
+        selectedDefs[0]?.name ?? "patients",
+      );
+      toast({
+        title: t("patients.exportComplete"),
+        description: t("patients.exportCompleteBody", { count: exportTarget.length }),
+      });
     } catch (e) {
-      toast({ title: "Export failed", description: (e as Error).message, variant: "destructive" });
+      toast({ title: t("patients.exportFailed"), description: (e as Error).message, variant: "destructive" });
     }
   }
 
   async function handleExportZip() {
     if (exportTarget.length === 0) {
-      toast({ title: "Nothing to export", variant: "destructive" });
+      toast({ title: t("patients.nothingToExport"), variant: "destructive" });
       return;
     }
     const withImages = exportTarget.filter((p) => {
@@ -230,7 +255,11 @@ export default function Patients() {
       return Array.isArray(imgs) && (imgs as string[]).length > 0;
     });
     if (withImages.length === 0) {
-      toast({ title: "No images to export", description: "None of the selected records have radiology images.", variant: "destructive" });
+      toast({
+        title: t("patients.noImagesToExport"),
+        description: t("patients.noImagesToExportBody"),
+        variant: "destructive",
+      });
       return;
     }
     setIsZipExporting(true);
@@ -240,11 +269,14 @@ export default function Patients() {
         setZipProgress({ done, total }),
       );
       toast({
-        title: "Images exported",
-        description: `${res.downloaded} downloaded, ${res.skipped} skipped.`,
+        title: t("patients.imagesExported"),
+        description: t("patients.imagesExportedBody", {
+          downloaded: res.downloaded,
+          skipped: res.skipped,
+        }),
       });
     } catch (e) {
-      toast({ title: "Export failed", description: (e as Error).message, variant: "destructive" });
+      toast({ title: t("patients.exportFailed"), description: (e as Error).message, variant: "destructive" });
     } finally {
       setIsZipExporting(false);
       setZipProgress(null);
@@ -253,7 +285,7 @@ export default function Patients() {
 
   function handleJsonExport() {
     if (exportTarget.length === 0) {
-      toast({ title: "Nothing to export", variant: "destructive" });
+      toast({ title: t("patients.nothingToExport"), variant: "destructive" });
       return;
     }
     const clean = exportTarget.map(toExportPatient);
@@ -266,19 +298,25 @@ export default function Patients() {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    toast({ title: "JSON exported", description: `${exportTarget.length} record(s) saved.` });
+    toast({
+      title: t("patients.jsonExported"),
+      description: t("patients.exportCompleteBody", { count: exportTarget.length }),
+    });
   }
 
   async function handleExcelImport(patients: Record<string, unknown>[]) {
     let imported = 0;
     let failed = 0;
-    const errors: string[] = [];
+    // Row numbers are reported so the Excel dialog can name the failing row.
+    // These errors used to be collected and then thrown away, so a user had
+    // no way to find out which rows had not imported.
+    const errors: { row: number; reason: string }[] = [];
     const targetId = primaryDefId;
     if (targetId == null) {
-      toast({ title: "No collection selected", variant: "destructive" });
+      toast({ title: t("patients.noCollectionSelected"), variant: "destructive" });
       return { imported: 0, failed: 0, errors: [] };
     }
-    for (const p of patients) {
+    for (const [i, p] of patients.entries()) {
       try {
         const data: Record<string, unknown> = { ...p };
         if (typeof data.radiologyImages === "string") {
@@ -293,13 +331,13 @@ export default function Patients() {
         imported++;
       } catch (e) {
         failed++;
-        errors.push((e as Error).message);
+        errors.push({ row: i + 1, reason: (e as Error).message || t("common.unknown") });
       }
     }
     qc.invalidateQueries({ queryKey: ["records", targetId] });
     toast({
-      title: `Imported ${imported} record(s)`,
-      description: failed > 0 ? `${failed} failed.` : undefined,
+      title: t("patients.importSummary", { imported }),
+      description: failed > 0 ? t("patients.importFailedBody", { failed }) : undefined,
       variant: failed > 0 ? "destructive" : "default",
     });
     return { imported, failed, errors };
@@ -340,7 +378,7 @@ export default function Patients() {
     e.target.value = "";
     const targetId = primaryDefId;
     if (targetId == null) {
-      toast({ title: "No collection selected", variant: "destructive" });
+      toast({ title: t("patients.noCollectionSelected"), variant: "destructive" });
       return;
     }
     setIsImporting(true);
@@ -350,7 +388,11 @@ export default function Patients() {
       try {
         parsed = JSON.parse(text);
       } catch {
-        toast({ title: "Import failed", description: "The file is not valid JSON.", variant: "destructive" });
+        toast({
+          title: t("destructive.failed"),
+          description: t("importExcel.urlFailed"),
+          variant: "destructive",
+        });
         return;
       }
       const records = Array.isArray(parsed) ? (parsed as Record<string, unknown>[]) : [parsed as Record<string, unknown>];
@@ -368,11 +410,17 @@ export default function Patients() {
       }
       qc.invalidateQueries({ queryKey: ["records", targetId] });
       if (failed > 0 && imported === 0) {
-        toast({ title: "Import failed", description: `All ${failed} record(s) failed.`, variant: "destructive" });
+        toast({
+          title: t("destructive.failed"),
+          description: t("importExcel.resultFailedCount", { count: failed }),
+          variant: "destructive",
+        });
       } else {
         toast({
-          title: "Import complete",
-          description: `${imported} imported${failed ? `, ${failed} failed — ${[...new Set(errors)].slice(0, 2).join("; ")}` : ""}.`,
+          title: t("importExcel.resultOk", { count: imported }),
+          description: failed
+            ? `${t("importExcel.resultFailedCount", { count: failed })} — ${[...new Set(errors)].slice(0, 2).join("; ")}`
+            : undefined,
           variant: failed > 0 ? "destructive" : "default",
         });
       }
@@ -382,49 +430,32 @@ export default function Patients() {
   }
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return rows
-      .filter((p) => {
-        if (singlePatients) {
-          if (sexFilter !== "all" && p.sex !== sexFilter) return false;
-          if (typeFilter !== "all" && p.collectionType !== typeFilter) return false;
-        }
-        if (q) {
-          const hay = [p.collectionName, ...Object.values(p)].filter(Boolean).join(" ").toLowerCase();
-          if (!hay.includes(q)) return false;
-        }
-        return true;
-      })
-      .sort((a, b) => {
-        const av = (a as Record<string, unknown>)[sortKey];
-        const bv = (b as Record<string, unknown>)[sortKey];
-        if (av == null && bv == null) return 0;
-        if (av == null) return 1;
-        if (bv == null) return -1;
-        const cmp = String(av).localeCompare(String(bv), undefined, { numeric: true });
-        return sortDir === "asc" ? cmp : -cmp;
-      });
-  }, [rows, search, sexFilter, typeFilter, sortKey, sortDir, singlePatients]);
+    const q = deferredSearch.trim().toLowerCase();
+    if (!q && !search.trim()) return rows.filter((p) => {
+      if (singlePatients) {
+        if (sexFilter !== "all" && p.sex !== sexFilter) return false;
+        if (typeFilter !== "all" && p.collectionType !== typeFilter) return false;
+      }
+      return true;
+    });
+    return rows.filter((p) => {
+      if (singlePatients) {
+        if (sexFilter !== "all" && p.sex !== sexFilter) return false;
+        if (typeFilter !== "all" && p.collectionType !== typeFilter) return false;
+      }
+      if (q) {
+        const hay = [p.collectionName, ...Object.values(p)].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+    // Sorting is now handled by <DataTable>.
+  }, [rows, deferredSearch, search, sexFilter, typeFilter, singlePatients]);
 
   const exportTarget = selectedIds.size > 0 ? filtered.filter((p) => selectedIds.has(p.id)) : filtered;
 
-  function toggleSort(key: string) {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else { setSortKey(key); setSortDir("asc"); }
-  }
-
-  function SortIcon({ col }: { col: string }) {
-    if (sortKey !== col) return <ChevronsUpDown className="ml-1 h-3.5 w-3.5 text-muted-foreground/40 inline" />;
-    return sortDir === "asc" ? <ChevronUp className="ml-1 h-3.5 w-3.5 inline" /> : <ChevronDown className="ml-1 h-3.5 w-3.5 inline" />;
-  }
-
   const allIds = filtered.map((p) => p.id);
-  const allSelected = allIds.length > 0 && allIds.every((id) => selectedIds.has(id));
-  const someSelected = allIds.some((id) => selectedIds.has(id));
 
-  function toggleAll() {
-    setSelectedIds(allSelected ? new Set() : new Set(allIds));
-  }
   function toggleOne(id: number) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -438,9 +469,14 @@ export default function Patients() {
     try {
       await recordsApi.deleteRecord(id);
       qc.invalidateQueries({ queryKey: ["records"] });
-      toast({ title: "Deleted", description: "Record removed." });
-    } catch {
-      toast({ title: "Error", description: "Failed to delete record.", variant: "destructive" });
+      toast({ title: t("records.deleted"), description: t("records.deletedBody") });
+    } catch (e) {
+      toast({
+        title: t("destructive.failed"),
+        description: (e as Error).message || t("records.deleteFailed"),
+        variant: "destructive",
+      });
+      throw e;
     }
     setRowToDelete(null);
   }
@@ -461,10 +497,11 @@ export default function Patients() {
     setSelectedIds(new Set());
     setIsDeletingSelected(false);
     toast({
-      title: `Deleted ${deleted} record(s)`,
-      description: failed > 0 ? `${failed} could not be deleted.` : undefined,
-      variant: failed > 0 ? "default" : "default",
+      title: t("common.rowsCount", { count: deleted }),
+      description: failed > 0 ? t("importExcel.resultFailedCount", { count: failed }) : undefined,
+      variant: failed > 0 ? "destructive" : "default",
     });
+    announce(t("a11y.resultsAnnounced", { count: deleted }));
   }
 
   const newHref = primaryIsPatients ? "/patients/new" : primaryDefId != null ? `/records/${primaryDefId}/new` : "/patients/new";
@@ -478,35 +515,224 @@ export default function Patients() {
   const openView = (p: PatientRow) => dn.open(viewAppId(p), viewHref(p));
   const openEdit = (p: PatientRow) => dn.open(editAppId(p), editHref(p));
 
+  // Build the <DataTable> column definitions dynamically. The table is
+  // virtualized + sortable inside <DataTable>; this component only owns
+  // the row data and selection state.
+  const columns: ColumnDef<PatientRow, unknown>[] = useMemo(() => {
+    const cols: ColumnDef<PatientRow, unknown>[] = [
+      {
+        id: "select",
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllRowsSelected()}
+            onCheckedChange={(v) => table.toggleAllRowsSelected(!!v)}
+            aria-label={t("patients.selectAllRows")}
+            className="translate-y-[1px]"
+          />
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(v) => row.toggleSelected(!!v)}
+            aria-label={t("patients.selectRow")}
+            className="translate-y-[1px]"
+            onClick={(e) => {
+              // Selection is driven entirely by TanStack's row model. Stop the
+              // click here so the (soon to be) row-level onRowClick handler
+              // does not also navigate when the checkbox is used.
+              e.stopPropagation();
+            }}
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+      },
+    ];
+
+    if (hasImageCol) {
+      cols.push({
+        accessorKey: "radiologyImages",
+        id: "image",
+        header: t("patients.colImage"),
+        cell: ({ row }) => <RadiologyThumb images={row.original[imageFieldKey!] as string | string[] | null} />,
+        enableSorting: false,
+        size: 56,
+      });
+    }
+
+    if (singlePatients) {
+      cols.push(
+        {
+          accessorKey: "patientId",
+          header: t("patients.colPatientId") ?? t("common.patientId"),
+          cell: ({ row }) => (
+            <button
+              type="button"
+              className="text-start text-primary hover:underline underline-offset-2 font-medium"
+              onClick={() => openView(row.original)}
+              aria-label={`${t("common.viewRecord")}: ${row.original.patientId ?? row.original.id}`}
+            >
+              {row.original.patientId ?? "—"}
+            </button>
+          ),
+        },
+        { accessorKey: "patientName", header: t("common.patientName"), cell: ({ row }) => row.original.patientName ?? "—" },
+        { accessorKey: "age", header: t("patients.colAge"), cell: ({ row }) => row.original.age ?? "—" },
+        { accessorKey: "sex", header: t("patients.colSex"), cell: ({ row }) => row.original.sex ?? "—" },
+        {
+          accessorKey: "collectionType",
+          header: t("patients.colType"),
+          cell: ({ row }) => <TypeBadge type={row.original.collectionType} />,
+        },
+        { accessorKey: "dateOfVisit", header: t("patients.colDateOfVisit"), cell: ({ row }) => row.original.dateOfVisit ?? "—" },
+      );
+    } else {
+      cols.push(
+        { accessorKey: "collectionName", header: t("patients.colCollection"), cell: ({ row }) => row.original.collectionName ?? "—" },
+        ...unionFields.map((f) => ({
+          accessorKey: f.key,
+          header: f.label,
+          cell: ({ row }: { row: { original: PatientRow } }) => {
+            const v = row.original[f.key];
+            if (f.key === "patientId" || f.key === "name" || f.key === "title") {
+              return (
+                <button
+                  type="button"
+                  className="text-start text-primary hover:underline underline-offset-2 font-medium max-w-full truncate block"
+                  onClick={() => openView(row.original)}
+                  aria-label={`${t("common.openRecord")}: ${String(v ?? row.original.id)}`}
+                >
+                  {v == null || v === "" ? "—" : String(v)}
+                </button>
+              );
+            }
+            return renderCell(v);
+          },
+        })),
+      );
+    }
+
+    cols.push({
+      id: "actions",
+      header: t("patients.colActions"),
+      cell: ({ row }) => {
+        const label = String(row.original.patientId ?? row.original.id);
+        return (
+          <div className="flex justify-end gap-1">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                openView(row.original);
+              }}
+              title={t("common.viewRecord")}
+              aria-label={`${t("common.viewRecord")}: ${label}`}
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                openEdit(row.original);
+              }}
+              title={t("common.editRecord")}
+              aria-label={`${t("common.editRecord")}: ${label}`}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <DestructiveActionButton
+              trigger={<Trash2 className="h-4 w-4" />}
+              triggerLabel={`${t("common.deleteRecord")}: ${label}`}
+              triggerClassName="text-destructive"
+              title={t("records.deleteTitle")}
+              description={t("destructive.body")}
+              subject={`${row.original.patientName ?? label} · ${label}`}
+              confirmLabel={t("common.delete")}
+              onSelect={async () => {
+                await deleteOne(row.original.id);
+              }}
+            />
+          </div>
+        );
+      },
+      enableSorting: false,
+    });
+
+    return cols;
+  }, [t, selectedDefs, unionFields, hasImageCol, imageFieldKey, openView, openEdit, deleteOne]);
+
+  // Bridge external Set<number> selection into the table's row model.
+  const rowSelectionState: Record<string, boolean> = useMemo(() => {
+    const m: Record<string, boolean> = {};
+    for (const id of selectedIds) m[String(id)] = true;
+    return m;
+  }, [selectedIds]);
+
   const title =
     selectedDefs.length === 1
       ? selectedDefs[0].name
       : selectedDefs.length === 0
-      ? "Patient Directory"
-      : `${selectedDefs.length} collections`;
+      ? t("patients.title")
+      : t("patients.collectionsTitle", { count: selectedDefs.length });
 
-  const baseCols = 1 + (hasImageCol ? 1 : 0) + (singlePatients ? 6 : 1 + unionFields.length);
-  const fullCols = baseCols + 1;
+  /**
+   * The exports operate on `exportTarget`, which is the *filtered* set (or the
+   * selection). Previously the button said nothing about scope, so a user who
+   * had filtered down to one patient could not tell that "Excel (128)" would
+   * still write the whole collection. Make the scope explicit.
+   */
+  const exportScopeTitle =
+    selectedIds.size > 0
+      ? t("common.selectedCount", { count: selectedIds.size })
+      : search.trim() || (singlePatients && (sexFilter !== "all" || typeFilter !== "all"))
+      ? t("patients.exportingFiltered", { count: filtered.length })
+      : t("common.rowsCount", { count: filtered.length });
 
   return (
     <Layout>
       <div className="max-w-6xl mx-auto space-y-4">
+        <FadeIn>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h1 className="text-3xl font-bold tracking-tight">{title}</h1>
-            <p className="text-muted-foreground mt-1">{filtered.length} record(s)</p>
+            <p className="text-muted-foreground mt-1 tabular-nums">
+              {t("common.rowsCount", { count: filtered.length })}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2 items-center">
+            <Button
+              variant="outline"
+              className="h-9 gap-1.5"
+              disabled={filtered.length === 0}
+              onClick={() => {
+                const firstId = filtered[0]?.id;
+                if (firstId == null) return;
+                dn.open("patient-workspace", `/patients/spatial/${firstId}`);
+              }}
+            >
+              <Box className="h-4 w-4" /> Spatial View
+            </Button>
+            <Button
+              variant="outline"
+              className="h-9 gap-1.5"
+              disabled={filtered.length === 0}
+              onClick={() => dn.open("patient-corridor", "/patients/vr")}
+            >
+              <Box className="h-4 w-4" /> 2D Scroll
+            </Button>
             <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
               <Layers className="h-4 w-4" />
-              <span className="hidden sm:inline">Collections:</span>
+              <span className="hidden sm:inline">{t("patients.collectionsLabel")}</span>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button variant="outline" className="h-9 justify-between gap-2 min-w-[200px]">
                     <span className="truncate">
                       {viewCollections.length === 0
-                        ? "Select collections"
-                        : `${viewCollections.length} collection${viewCollections.length > 1 ? "s" : ""}`}
+                        ? t("patients.selectCollections")
+                        : t("patients.selectedCollections", { count: viewCollections.length })}
                     </span>
                     <ChevronDown className="h-4 w-4 opacity-50" />
                   </Button>
@@ -514,7 +740,9 @@ export default function Patients() {
                 <PopoverContent className="w-72 p-2">
                   <div className="max-h-72 overflow-auto space-y-1">
                     {selectableDefs.length === 0 && (
-                      <p className="text-sm text-muted-foreground px-2 py-1">No collections available.</p>
+                      <p className="text-sm text-muted-foreground px-2 py-1">
+                        {t("patients.noCollections")}
+                      </p>
                     )}
                     {selectableDefs.map((c) => {
                       const checked = viewCollections.includes(c.id);
@@ -532,8 +760,8 @@ export default function Patients() {
                           <span className={cn("flex h-4 w-4 items-center justify-center rounded border", checked ? "bg-primary border-primary text-primary-foreground" : "border-input")}>
                             {checked && <Check className="h-3 w-3" />}
                           </span>
-                          <span className="flex-1 text-left truncate">{c.name}</span>
-                          {c.isActive && <span className="text-[10px] uppercase text-emerald-600">viewed</span>}
+                          <span className="flex-1 text-start truncate">{c.name}</span>
+                          {c.isActive && <span className="text-xs uppercase text-emerald-600">viewed</span>}
                         </button>
                       );
                     })}
@@ -550,228 +778,218 @@ export default function Patients() {
                 </PopoverContent>
               </Popover>
             </div>
-            <Button variant="outline" onClick={handleExportExcel} disabled={exportTarget.length === 0}>
+            <Button
+              variant="outline"
+              onClick={handleExportExcel}
+              disabled={exportTarget.length === 0}
+              title={exportScopeTitle}
+            >
               <Download className="w-4 h-4 mr-2 text-blue-600" />
-              {selectedIds.size > 0 ? `Excel (${selectedIds.size})` : `Excel (${filtered.length})`}
+              {selectedIds.size > 0
+                ? `${t("patients.exportExcel")} (${selectedIds.size})`
+                : `${t("patients.exportExcel")} (${filtered.length})`}
             </Button>
-            <Button variant="outline" onClick={handleExportZip} disabled={isZipExporting || exportTarget.length === 0}>
-              {isZipExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Archive className="w-4 h-4 mr-2 text-violet-600" />}
+            <Button
+              variant="outline"
+              onClick={handleExportZip}
+              disabled={isZipExporting || exportTarget.length === 0}
+              title={exportScopeTitle}
+            >
+              {isZipExporting ? (
+                <Loader2 className="w-4 h-4 me-2 animate-spin" />
+              ) : (
+                <Archive className="w-4 h-4 mr-2 text-violet-600" />
+              )}
               {isZipExporting && zipProgress && zipProgress.total > 0
-                ? `${zipProgress.done}/${zipProgress.total} images…`
+                ? `${zipProgress.done}/${zipProgress.total}`
                 : selectedIds.size > 0
-                ? `Images ZIP (${selectedIds.size})`
-                : `Images ZIP (${filtered.length})`}
+                ? `${t("patients.exportZip")} (${selectedIds.size})`
+                : `${t("patients.exportZip")} (${filtered.length})`}
             </Button>
-            <Button variant="outline" onClick={handleJsonExport} disabled={exportTarget.length === 0}>
+            <Button
+              variant="outline"
+              onClick={handleJsonExport}
+              disabled={exportTarget.length === 0}
+              title={exportScopeTitle}
+            >
               <FileJson className="w-4 h-4 mr-2" />
-              {selectedIds.size > 0 ? `JSON (${selectedIds.size})` : `JSON (${filtered.length})`}
+              {selectedIds.size > 0
+                ? `${t("patients.exportJson")} (${selectedIds.size})`
+                : `${t("patients.exportJson")} (${filtered.length})`}
             </Button>
             <Button variant="outline" onClick={() => setExcelOpen(true)}>
-              <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> Import Excel
+              <FileSpreadsheet className="w-4 h-4 mr-2 text-emerald-600" /> {t("patients.importExcel")}
             </Button>
             <Button variant="outline" size="sm" onClick={() => setImageImportOpen(true)}>
-              <ImageIcon className="w-4 h-4 mr-1.5" /> Import Images
+              <ImageIcon className="w-4 h-4 mr-1.5" /> {t("patients.importImages")}
             </Button>
             <Button variant="outline" onClick={() => importInputRef.current?.click()} disabled={isImporting}>
-              {isImporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2 text-orange-600" />}
-              {isImporting ? "Importing…" : "Import JSON"}
+              {isImporting ? (
+                <Loader2 className="w-4 h-4 me-2 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 mr-2 text-orange-600" />
+              )}
+              {isImporting ? t("patients.importing") : t("patients.importJson")}
             </Button>
-            <input ref={importInputRef} type="file" accept=".json,application/json" className="sr-only" onChange={handleJsonImport} />
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json,application/json"
+              className="sr-only"
+              aria-label={t("patients.importJson")}
+              onChange={handleJsonImport}
+            />
             <Button onClick={() => dn.open(primaryIsPatients ? "patients/new" : "records/:definitionId/new", newHref)}>
-              <Plus className="w-4 h-4 mr-2" /> {primaryIsPatients ? "New Patient" : "New Record"}
+              <Plus className="w-4 h-4 mr-2" />{" "}
+              {primaryIsPatients ? t("patients.newPatient") : t("patients.newRecord")}
             </Button>
           </div>
         </div>
 
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Search className="absolute start-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Search records…"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-8"
+              onChange={(e) => startFiltering(() => setSearch(e.target.value))}
+              placeholder={t("patients.search")}
+              aria-label={t("patients.search")}
+              className="ps-8"
             />
           </div>
           {singlePatients && (
             <>
               <Select value={sexFilter} onValueChange={setSexFilter}>
-                <SelectTrigger className="sm:w-40"><SelectValue placeholder="Sex" /></SelectTrigger>
+                <SelectTrigger className="sm:w-40" aria-label={t("patients.colSex")}>
+                  <SelectValue placeholder={t("patients.colSex")} />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Sexes</SelectItem>
-                  <SelectItem value="Male">Male</SelectItem>
-                  <SelectItem value="Female">Female</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
+                  <SelectItem value="all">{t("patients.allSexes")}</SelectItem>
+                  <SelectItem value="Male">{t("patients.male")}</SelectItem>
+                  <SelectItem value="Female">{t("patients.female")}</SelectItem>
+                  <SelectItem value="Other">{t("patients.other")}</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={typeFilter} onValueChange={setTypeFilter}>
-                <SelectTrigger className="sm:w-44"><SelectValue placeholder="Type" /></SelectTrigger>
+                <SelectTrigger className="sm:w-44" aria-label={t("patients.colType")}>
+                  <SelectValue placeholder={t("patients.colType")} />
+                </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All Types</SelectItem>
-                  <SelectItem value="Normal">Normal</SelectItem>
-                  <SelectItem value="Abnormal">Abnormal</SelectItem>
-                  <SelectItem value="Suspicious">Suspicious</SelectItem>
+                  <SelectItem value="all">{t("patients.allTypes")}</SelectItem>
+                  <SelectItem value="Normal">{t("patients.normal")}</SelectItem>
+                  <SelectItem value="Abnormal">{t("patients.abnormal")}</SelectItem>
+                  <SelectItem value="Suspicious">{t("patients.suspicious")}</SelectItem>
                 </SelectContent>
               </Select>
             </>
           )}
         </div>
 
-        {selectedIds.size > 0 && (
-          <div className="flex items-center gap-3 bg-secondary/50 border rounded-md px-3 py-2">
-            <span className="text-sm">{selectedIds.size} selected</span>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm" disabled={isDeletingSelected}>
-                  <Trash2 className="w-4 h-4 mr-1" /> Delete selected
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Delete {selectedIds.size} record(s)?</AlertDialogTitle>
-                  <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={deleteSelected} className="bg-destructive text-destructive-foreground">
-                    Delete
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
+{selectedIds.size > 0 && (
+          <div
+            role="region"
+            aria-label={t("a11y.rowActions")}
+            className="flex items-center gap-3 bg-secondary/50 border rounded-md px-3 py-2"
+          >
+            <span className="text-sm">{t("common.selectedCount", { count: selectedIds.size })}</span>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={isDeletingSelected}
+              onClick={() => setBulkDeleteOpen(true)}
+            >
+              <Trash2 className="h-4 w-4 mr-1" /> {t("patients.deleteSelected")}
+            </Button>
           </div>
         )}
 
-        <div className="border rounded-lg overflow-hidden">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10">
-                  <Checkbox checked={allSelected} onCheckedChange={toggleAll} aria-label="Select all" />
-                </TableHead>
-                {hasImageCol && <TableHead className="w-14">Img</TableHead>}
-                {singlePatients ? (
-                  <>
-                    <TableHead className="w-14 cursor-pointer" onClick={() => toggleSort("patientId")}>Patient ID <SortIcon col="patientId" /></TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("patientName")}>Name <SortIcon col="patientName" /></TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("age")}>Age <SortIcon col="age" /></TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("sex")}>Sex <SortIcon col="sex" /></TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("collectionType")}>Type <SortIcon col="collectionType" /></TableHead>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("dateOfVisit")}>Date of Visit <SortIcon col="dateOfVisit" /></TableHead>
-                  </>
-                ) : (
-                  <>
-                    <TableHead className="cursor-pointer" onClick={() => toggleSort("collectionName")}>Collection <SortIcon col="collectionName" /></TableHead>
-                    {unionFields.map((f) => (
-                      <TableHead key={f.key} className="cursor-pointer" onClick={() => toggleSort(f.key)}>
-                        {f.label} <SortIcon col={f.key} />
-                      </TableHead>
-                    ))}
-                  </>
-                )}
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                Array.from({ length: 6 }).map((_, i) => (
-                  <TableRow key={i}>
-                    <TableCell colSpan={fullCols}><Skeleton className="h-10 w-full" /></TableCell>
-                  </TableRow>
-                ))
-              ) : filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={fullCols} className="text-center text-muted-foreground py-10">No records found.</TableCell>
-                </TableRow>
-              ) : (
-                filtered.map((p) => (
-                  <TableRow key={`${p.definitionId}-${p.id}`} data-state={selectedIds.has(p.id) ? "selected" : undefined}>
-                    <TableCell>
-                      <Checkbox checked={selectedIds.has(p.id)} onCheckedChange={() => toggleOne(p.id)} aria-label="Select row" />
-                    </TableCell>
-                    {hasImageCol && (
-                      <TableCell><RadiologyThumb images={p[imageFieldKey!] as string | string[] | null} /></TableCell>
-                    )}
-                    {singlePatients ? (
-                      <>
-                        <TableCell className="font-medium">
-                          <button
-                            type="button"
-                            className="text-left text-blue-600 hover:underline underline-offset-2 font-medium"
-                            onClick={() => openView(p)}
-                            title="Open record"
-                          >
-                            {p.patientId ?? "—"}
-                          </button>
-                        </TableCell>
-                        <TableCell>{p.patientName ?? "—"}</TableCell>
-                        <TableCell>{p.age ?? "—"}</TableCell>
-                        <TableCell>{p.sex ?? "—"}</TableCell>
-                        <TableCell><TypeBadge type={p.collectionType} /></TableCell>
-                        <TableCell>{p.dateOfVisit ?? "—"}</TableCell>
-                      </>
-                    ) : (
-                      <>
-                        <TableCell className="font-medium">{p.collectionName ?? "—"}</TableCell>
-                        {unionFields.map((f) => (
-                          <TableCell key={f.key} className="max-w-[220px] truncate">
-                            {f.type === "image"
-                              ? renderCell(p[f.key])
-                              : (() => {
-                                  const v = p[f.key];
-                                  if (f.key === "patientId" || f.key === "name" || f.key === "title") {
-                                    return (
-                                      <button
-                                        type="button"
-                                        className="text-left text-blue-600 hover:underline underline-offset-2 font-medium max-w-full truncate block"
-                                        onClick={() => openView(p)}
-                                        title="Open record"
-                                      >
-                                        {v == null || v === "" ? "—" : String(v)}
-                                      </button>
-                                    );
-                                  }
-                                  return renderCell(v);
-                                })()}
-                          </TableCell>
-                        ))}
-                      </>
-                    )}
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => openView(p)} title="View">
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => openEdit(p)} title="Edit">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button size="sm" variant="ghost" className="text-destructive" title="Delete">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete this record?</AlertDialogTitle>
-                              <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => deleteOne(p.id)} className="bg-destructive text-destructive-foreground">
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        </FadeIn>
+
+        <ConfirmDestructive
+          open={bulkDeleteOpen}
+          onOpenChange={setBulkDeleteOpen}
+          title={t("patients.deleteSelectedTitle", { count: selectedIds.size })}
+          description={t("destructive.body")}
+          confirmLabel={isDeletingSelected ? t("common.deleting") : t("common.delete")}
+          onConfirm={deleteSelected}
+        />
+
+        {/*
+          isError-first. Without this a 500 produced the same empty table as an
+          empty collection, and a radiologist could read "no patients" off a
+          failed request.
+        */}
+        {isError ? (
+          <ErrorState
+            title={t("common.errorTitle")}
+            description={loadErrors.join(" · ")}
+            action={
+              <Button
+                onClick={() => {
+                  for (const q of recordResults) void q.refetch();
+                }}
+              >
+                {t("common.retry")}
+              </Button>
+            }
+          />
+        ) : (
+          /*
+           * NO per-row entrance animation here, deliberately. This table is
+           * virtualized and can hold 2,000 rows; a stagger would either run for
+           * minutes or have to be capped so hard that it does nothing. The
+           * cross-fade below is the whole of the motion budget for this page.
+           */
+          <CrossFade
+            loading={isLoading}
+            label={t("common.loading")}
+            skeleton={
+              <div className="space-y-2 rounded-lg border p-3">
+                {[...Array(8)].map((_, i) => (
+                  <Skeleton key={i} className="h-9 w-full" />
+                ))}
+              </div>
+            }
+          >
+          <DataTable<PatientRow>
+            data={filtered}
+          columns={columns}
+          getRowId={(row) => String(row.id)}
+          storageKey="patients-directory-v2"
+          searchable={false}
+          enableRowSelection
+          /* The actions column is the primary route from the table to a
+           * record. It was defaulted to hidden, so the only way to reach a
+           * patient was to open the Columns menu — and the hidden state was
+           * persisted, so it stayed that way forever. */
+          initialColumnVisibility={{ actions: true }}
+          rowSelection={rowSelectionState}
+          onRowSelectionChange={(updater) => {
+            // TanStack passes an *updater function* (or, when controlled by an
+            // object, a plain RowSelectionState). Resolving both forms keeps
+            // this compiling against either signature of DataTable's prop.
+            const next = (
+              typeof updater === "function"
+                ? (updater as (old: Record<string, boolean>) => Record<string, boolean>)(rowSelectionState)
+                : updater
+            ) as Record<string, boolean> | undefined;
+            const ids = new Set<number>();
+            for (const key of Object.keys(next ?? {})) {
+              const num = Number(key);
+              if (!Number.isNaN(num)) ids.add(num);
+            }
+            setSelectedIds(ids);
+          }}
+          emptyState={
+            <NoDataState
+              title={t("patients.noRecords")}
+              description={t("patients.noRecordsDesc")}
+            />
+          }
+          className="border rounded-lg"
+        />
+          </CrossFade>
+        )}
 
         <ExcelImportDialog open={excelOpen} onOpenChange={setExcelOpen} onImport={handleExcelImport} />
         <ImportImagesDialog

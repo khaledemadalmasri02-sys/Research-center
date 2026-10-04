@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import { useTranslation } from "react-i18next";
 
 type Motif = "bars" | "card" | "pulse" | "flow" | "grid";
 
@@ -159,9 +160,10 @@ function Motif({ def }: { def: SchemeDef }) {
 }
 
 export function TourScheme({ stepKey }: { stepKey: string }) {
+  const { t } = useTranslation();
   const def = SCHEMES[stepKey] ?? SCHEMES.welcome;
   return (
-    <svg viewBox="0 0 320 180" className="h-full w-full" role="img" aria-label="tutorial animation">
+    <svg viewBox="0 0 320 180" className="h-full w-full" role="img" aria-label={t("tourSettings.schemeLabel")}>
       <defs>
         <linearGradient id="ts-bg" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="#0f172a" />

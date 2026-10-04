@@ -1,14 +1,16 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Layout } from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, ShieldAlert } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { useTranslation } from "react-i18next";
+import { NoPermissionState } from "@/components/ui/states";
+import { DataTable } from "@/components/ui/data-table";
+import type { ColumnDef } from "@tanstack/react-table";
 
 interface AuditEvent {
   id: number;
@@ -33,15 +35,68 @@ function useAudit(actionFilter: string) {
   });
 }
 
+const columns: ColumnDef<AuditEvent, unknown>[] = [
+  {
+    accessorKey: "createdAt",
+    header: "Time",
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground whitespace-nowrap">
+        {new Date(row.original.createdAt).toLocaleString()}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "action",
+    header: "Action",
+    cell: ({ row }) => <Badge variant="outline">{row.original.action}</Badge>,
+  },
+  {
+    accessorKey: "userId",
+    header: "User",
+    cell: ({ row }) => row.original.userId ?? "—",
+  },
+  {
+    id: "entity",
+    header: "Entity",
+    cell: ({ row }) => (
+      <span className="text-xs">
+        {row.original.entity ?? "—"}
+        {row.original.entityId != null ? ` #${row.original.entityId}` : ""}
+      </span>
+    ),
+  },
+  {
+    accessorKey: "ip",
+    header: "IP",
+    cell: ({ row }) => (
+      <span className="text-xs text-muted-foreground">{row.original.ip ?? "—"}</span>
+    ),
+  },
+];
+
 export default function Activity() {
   const { canAdminAccess } = useAuth();
   const [, navigate] = useLocation();
   const { t } = useTranslation();
   const [actionFilter, setActionFilter] = useState("");
 
+  // `navigate()` used to run DURING render — a React violation that
+  // StrictMode double-fires and that sets state on an unmounted component.
+  useEffect(() => {
+    if (!canAdminAccess) navigate("/");
+  }, [canAdminAccess, navigate]);
+
   if (!canAdminAccess) {
-    navigate("/");
-    return null;
+    return (
+      <Layout>
+        <div className="max-w-2xl mx-auto">
+          <NoPermissionState
+            title={t("common.noPermissionTitle")}
+            description={t("common.noPermissionDesc")}
+          />
+        </div>
+      </Layout>
+    );
   }
 
   const { data, isLoading } = useAudit(actionFilter);
@@ -53,12 +108,12 @@ export default function Activity() {
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
             <ShieldAlert className="h-7 w-7 text-primary" /> {t("activity.global")}
           </h1>
-          <p className="text-muted-foreground mt-1">Global audit trail across the platform.</p>
+          <p className="text-muted-foreground mt-1">{t("features.audit.desc")}</p>
         </div>
 
         <div className="max-w-sm">
           <Input
-            placeholder="Filter by action (e.g. auth.login)"
+            placeholder={t("activity.filterPlaceholder")}
             value={actionFilter}
             onChange={(e) => setActionFilter(e.target.value)}
             className="h-9"
@@ -75,37 +130,14 @@ export default function Activity() {
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Time</TableHead>
-                      <TableHead>Action</TableHead>
-                      <TableHead>User</TableHead>
-                      <TableHead>Entity</TableHead>
-                      <TableHead>IP</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {data?.events.map((e) => (
-                      <TableRow key={e.id}>
-                        <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                          {new Date(e.createdAt).toLocaleString()}
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{e.action}</Badge>
-                        </TableCell>
-                        <TableCell>{e.userId ?? "—"}</TableCell>
-                        <TableCell className="text-xs">
-                          {e.entity ?? "—"}
-                          {e.entityId != null ? ` #${e.entityId}` : ""}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">{e.ip ?? "—"}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <DataTable<AuditEvent>
+                data={data?.events ?? []}
+                columns={columns}
+                getRowId={(row) => String(row.id)}
+                storageKey="activity-global"
+                initialSort={[{ id: "createdAt", desc: true }]}
+                emptyState={<div className="py-8 text-center text-sm text-muted-foreground">{t("activity.emptyAudit")}</div>}
+              />
             )}
           </CardContent>
         </Card>

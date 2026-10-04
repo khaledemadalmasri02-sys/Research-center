@@ -23,4 +23,6 @@ export interface BoxStats {
   mean: number;
   iqr: number;
   outliers: number[];
+  /** Sample size, when the server supplies it. Drives the figcaption n=. */
+  n?: number;
 }

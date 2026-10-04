@@ -4,8 +4,10 @@ import RecordDetail from "@/pages/record-detail";
 import { Link } from "wouter";
 import { Info, Loader2 } from "lucide-react";
 import { Layout } from "@/components/layout";
+import { useTranslation } from "react-i18next";
 
 export default function NewRecordPage() {
+  const { t } = useTranslation();
   const { data: def, isLoading } = useDefaultDefinition();
 
   if (isLoading) {
@@ -22,12 +24,14 @@ export default function NewRecordPage() {
     <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm flex gap-3">
       <Info className="h-5 w-5 text-primary shrink-0 mt-0.5" />
       <div className="leading-relaxed">
-        New records are saved to the <b>{def?.name ?? "default"}</b> collection — your{" "}
-        <b>default collection</b>. To change where new records are added, open{" "}
+        {t("newRecord.guidePre")} <b>{def?.name ?? t("newRecord.defaultFallback")}</b>{" "}
+        {t("newRecord.guideName")} <b>{t("newRecord.guideDefault")}</b>.{" "}
+        {t("newRecord.guideChangePre")}{" "}
         <Link href="/collections" className="text-primary underline font-medium">
-          Data Collections
+          {t("newRecord.guideLink")}
         </Link>{" "}
-        and click <b>Set as default</b> on the collection you want.
+        {t("newRecord.guideChangePost")} <b>{t("newRecord.guideAction")}</b>{" "}
+        {t("newRecord.guideActionPost")}
       </div>
     </div>
   );
@@ -37,7 +41,10 @@ export default function NewRecordPage() {
       <Layout>
         <div className="max-w-3xl mx-auto space-y-6">
           {guide}
-          <p className="text-muted-foreground">No collection is available yet. Create one in Data Collections first.</p>
+          <div>
+            <p className="font-medium">{t("newRecord.noCollectionTitle")}</p>
+            <p className="text-sm">{t("newRecord.noCollectionBody")}</p>
+          </div>
         </div>
       </Layout>
     );

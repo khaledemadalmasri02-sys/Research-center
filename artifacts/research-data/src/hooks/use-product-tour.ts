@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "./use-auth";
+import { isDesktopMode } from "@/lib/desktop-mode";
 
 const LAST_ACTIVE_KEY = "mr_tour_last_active";
 const SEEN_KEY = "mr_tour_seen";
@@ -19,23 +20,41 @@ export interface TourStep {
   adminOnly?: boolean;
 }
 
+/**
+ * Every spotlighted step is anchored to a stable `data-tour="<key>"`
+ * attribute. The sidebar renders `<button>`s, not `<a>`s, so the previous
+ * `a[href="/…"]` selectors never matched anything and 14/14 steps silently
+ * degraded to centered cards. Each shell (classic sidebar / desktop dock)
+ * now owns one `data-tour` attribute per step; a step whose target is absent
+ * from the DOM is dropped rather than rendered as a context-free card.
+ */
 export const TOUR_STEPS: TourStep[] = [
   { key: "welcome", placement: "center" },
-  { key: "dashboard", selector: 'a[href="/"]', placement: "right" },
-  { key: "patients", selector: 'a[href="/patients"]', placement: "right" },
-  { key: "collections", selector: 'a[href="/collections"]', placement: "right" },
-  { key: "dataAnalysis", selector: 'a[href="/data-analysis"]', placement: "right" },
-  { key: "feedback", selector: 'a[href="/feedback"]', placement: "right" },
-  { key: "moreFeatures", selector: 'a[href="/more-features"]', placement: "right" },
-  { key: "myActivity", selector: 'a[href="/activity/me"]', placement: "right" },
-  { key: "apiTokens", selector: 'a[href="/api-tokens"]', placement: "right" },
-  { key: "sessions", selector: 'a[href="/sessions"]', placement: "right" },
+  { key: "dashboard", selector: '[data-tour="dashboard"]', placement: "right" },
+  { key: "patients", selector: '[data-tour="patients"]', placement: "right" },
+  { key: "collections", selector: '[data-tour="collections"]', placement: "right" },
+  { key: "dataAnalysis", selector: '[data-tour="dataAnalysis"]', placement: "right" },
+  { key: "feedback", selector: '[data-tour="feedback"]', placement: "right" },
+  { key: "moreFeatures", selector: '[data-tour="moreFeatures"]', placement: "right" },
+  { key: "myActivity", selector: '[data-tour="myActivity"]', placement: "right" },
+  { key: "apiTokens", selector: '[data-tour="apiTokens"]', placement: "right" },
+  { key: "sessions", selector: '[data-tour="sessions"]', placement: "right" },
   { key: "notifications", selector: '[data-tour="notifications"]', placement: "bottom" },
   { key: "theme", selector: '[data-tour="theme"]', placement: "bottom" },
   { key: "language", selector: '[data-tour="language"]', placement: "bottom" },
-  { key: "admin", selector: 'a[href="/admin"]', placement: "right", adminOnly: true },
+  { key: "admin", selector: '[data-tour="admin"]', placement: "right", adminOnly: true },
   { key: "finish", placement: "center" },
 ];
+
+function hasTarget(selector: string | undefined): boolean {
+  if (!selector) return true;
+  if (typeof document === "undefined") return false;
+  try {
+    return document.querySelector(selector) !== null;
+  } catch {
+    return false;
+  }
+}
 
 function readLastActive(): number | null {
   try {
@@ -60,7 +79,30 @@ export function useProductTour() {
   const [step, setStep] = useState(0);
   const sessionShown = useRef(false);
 
-  const steps = TOUR_STEPS.filter((s) => !s.adminOnly || canAdminAccess);
+  const authored = useMemo(
+    () => TOUR_STEPS.filter((s) => !s.adminOnly || canAdminAccess),
+    [canAdminAccess],
+  );
+
+  /**
+   * Steps that can actually be shown in the *current* shell. Recomputed
+   * whenever the tour opens, because the sidebar/dock markup is not in the
+   * document before the shell mounts.
+   *
+   * In desktop mode the classic sidebar never renders, so only the two
+   * authored-as-centered steps survive until the desktop dock/top bar grow
+   * matching `data-tour` attributes (see the report: the desktop shell
+   * should add them; until then the tour degrades instead of lying).
+   */
+  const steps = useMemo(() => {
+    if (!open) return authored;
+    const desktop = isDesktopMode();
+    return authored.filter((s) => {
+      if (!s.selector) return true;
+      if (desktop) return false;
+      return hasTarget(s.selector);
+    });
+  }, [authored, open]);
 
   const bumpLastActive = useCallback(() => {
     try {
@@ -107,6 +149,13 @@ export function useProductTour() {
   const skip = useCallback(() => {
     finish();
   }, [finish]);
+
+  // The visible list can shrink when the tour opens (a target is missing) or
+  // when the user gains admin rights mid-session. Clamp so `step` can never
+  // point past the end of the list.
+  useEffect(() => {
+    setStep((s) => (s > steps.length - 1 ? 0 : s));
+  }, [steps.length]);
 
   // Decide whether to auto-open on sign-in / after idle days.
   useEffect(() => {

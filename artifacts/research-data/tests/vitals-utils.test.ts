@@ -1,6 +1,8 @@
 // P2.1 — tests for lib/vitals-utils.ts.
 
-import test from "node:test";
+// Assertions stay on node:assert/strict so the expected values are
+// unchanged; only the runner moved to vitest.
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import {
   parseVitals,

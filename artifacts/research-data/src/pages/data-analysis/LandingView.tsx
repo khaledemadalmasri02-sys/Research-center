@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Database, Loader2, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { LoadingState, NoDataState } from "@/components/ui/states";
 import type { DatasetSummary } from "./types";
 
 interface LandingViewProps {
@@ -52,6 +54,20 @@ interface LandingViewProps {
 
 export function LandingView(props: LandingViewProps) {
   const { t } = useTranslation();
+  /**
+   * All eight `<Label>`s here were unassociated. Each control now carries a
+   * stable `useId()` value that its label points at.
+   */
+  const ids = {
+    importName: useId(),
+    importFile: useId(),
+    importFormat: useId(),
+    buildName: useId(),
+    buildColumns: useId(),
+    buildSex: useId(),
+    buildType: useId(),
+    buildSearch: useId(),
+  };
   const {
     datasets,
     loading,
@@ -90,26 +106,28 @@ export function LandingView(props: LandingViewProps) {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
-              <Label>{t("analysis.datasetName")}</Label>
+              <Label htmlFor={ids.importName}>{t("analysis.datasetName")}</Label>
               <Input
+                id={ids.importName}
                 value={importName}
                 onChange={(e) => setImportName(e.target.value)}
-                placeholder="My dataset"
+                placeholder={t("analysis.phMyDataset")}
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("analysis.file")}</Label>
+              <Label htmlFor={ids.importFile}>{t("analysis.file")}</Label>
               <Input
+                id={ids.importFile}
                 type="file"
                 accept=".csv,.xlsx,.sav"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)}
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("analysis.format")}</Label>
+              <Label htmlFor={ids.importFormat}>{t("analysis.format")}</Label>
               <Select value={importFormat} onValueChange={setImportFormat}>
-                <SelectTrigger>
-                  <SelectValue placeholder="auto" />
+                <SelectTrigger id={ids.importFormat}>
+                  <SelectValue placeholder={t("analysis.autoPlaceholder")} />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="csv">CSV</SelectItem>
@@ -134,41 +152,46 @@ export function LandingView(props: LandingViewProps) {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1">
-              <Label>{t("analysis.datasetName")}</Label>
+              <Label htmlFor={ids.buildName}>{t("analysis.datasetName")}</Label>
               <Input
+                id={ids.buildName}
                 value={buildName}
                 onChange={(e) => setBuildName(e.target.value)}
-                placeholder="Patient dataset"
+                placeholder={t("analysis.phPatientDataset")}
               />
             </div>
             <div className="space-y-1">
-              <Label>{t("analysis.columns")}</Label>
+              <Label htmlFor={ids.buildColumns}>{t("analysis.columns")}</Label>
               <Input
+                id={ids.buildColumns}
                 value={buildColumns}
                 onChange={(e) => setBuildColumns(e.target.value)}
-                placeholder="age, sex, finalConfirmedDiagnosis"
+                placeholder={t("analysis.phColumnsExample")}
               />
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
-                <Label>{t("analysis.sex")}</Label>
+                <Label htmlFor={ids.buildSex}>{t("analysis.sex")}</Label>
                 <Input
+                  id={ids.buildSex}
                   value={buildSex}
                   onChange={(e) => setBuildSex(e.target.value)}
-                  placeholder="male"
+                  placeholder={t("analysis.phMale")}
                 />
               </div>
               <div className="space-y-1">
-                <Label>{t("analysis.collectionType")}</Label>
+                <Label htmlFor={ids.buildType}>{t("analysis.collectionType")}</Label>
                 <Input
+                  id={ids.buildType}
                   value={buildType}
                   onChange={(e) => setBuildType(e.target.value)}
                 />
               </div>
             </div>
             <div className="space-y-1">
-              <Label>{t("analysis.search")}</Label>
+              <Label htmlFor={ids.buildSearch}>{t("analysis.search")}</Label>
               <Input
+                id={ids.buildSearch}
                 value={buildSearch}
                 onChange={(e) => setBuildSearch(e.target.value)}
               />
@@ -188,21 +211,34 @@ export function LandingView(props: LandingViewProps) {
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" /> Loading…
-            </div>
+            <LoadingState title={t("analysis.loadingDatasets")} size="sm" className="py-6" />
           ) : datasets.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t("analysis.noDatasets")}</p>
+            <NoDataState
+              title={t("analysis.noDatasets")}
+              description={t("analysis.noDatasetsDesc")}
+              action={
+                <Button variant="outline" size="sm" asChild>
+                  <a
+                    href="https://example.com/docs/analysis"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {t("analysis.noDatasetsAction")}
+                  </a>
+                </Button>
+              }
+              size="sm"
+            />
           ) : (
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>ID</TableHead>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Source</TableHead>
-                    <TableHead>Format</TableHead>
-                    <TableHead>Rows</TableHead>
+                    <TableHead>{t("analysis.colId")}</TableHead>
+                    <TableHead>{t("analysis.colName")}</TableHead>
+                    <TableHead>{t("analysis.colSource")}</TableHead>
+                    <TableHead>{t("analysis.colFormat")}</TableHead>
+                    <TableHead>{t("analysis.colRows")}</TableHead>
                     <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>

@@ -7,12 +7,11 @@
 // did not say, and a missed drug-name casing is a clinical-quality
 // issue. These tests pin the current behaviour.
 
-import test from "node:test";
+// Assertions stay on node:assert/strict so the expected values are
+// unchanged; only the runner moved to vitest.
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import {
-  correctMedicalText,
-  type Correction,
-} from "../src/lib/medical-correction.ts";
+import { correctMedicalText, type Correction } from "../src/lib/medical-correction.ts";
 
 function correctionsOf(input: string): string[] {
   return correctMedicalText(input).corrections.map((c) => c.corrected);
@@ -45,10 +44,7 @@ test("abbreviation: does NOT match inside a longer word", () => {
   // 'bpm' is a separate entry; 'bp' is too short to anchor on.
   // The corrector should leave 'bpm' alone.
   const allTargets = out.corrections.map((c) => c.original);
-  assert.ok(
-    !allTargets.includes("BP"),
-    "should not expand BP inside bpm",
-  );
+  assert.ok(!allTargets.includes("BP"), "should not expand BP inside bpm");
 });
 
 test("abbreviation: spo2 → oxygen saturation", () => {
@@ -93,9 +89,7 @@ test("abbreviation: multiple abbreviations in one sentence", () => {
 test("phonetic: 'new monia' → pneumonia", () => {
   const out = correctMedicalText("Pt dx with new monia, started abx");
   assert.match(out.corrected, /pneumonia/);
-  assert.ok(
-    out.corrections.some((c) => c.reason.startsWith("phonetic:")),
-  );
+  assert.ok(out.corrections.some((c) => c.reason.startsWith("phonetic:")));
 });
 
 test("phonetic: 'taky cardia' → tachycardia", () => {
@@ -181,10 +175,7 @@ test("pipeline: KNOWN BUG — 'Pt' (patient) is miscorrected to 'prothrombin tim
   );
   // If the bug is fixed, this assertion fails and the test
   // reminds the contributor to update the test.
-  assert.ok(
-    bug,
-    "expected 'Pt' to currently be miscorrected to 'prothrombin time' (known bug)",
-  );
+  assert.ok(bug, "expected 'Pt' to currently be miscorrected to 'prothrombin time' (known bug)");
 });
 
 test("pipeline: a single character that happens to match an abbrev is anchored", () => {

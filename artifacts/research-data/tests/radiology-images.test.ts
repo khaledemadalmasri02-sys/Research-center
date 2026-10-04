@@ -1,11 +1,10 @@
 // P2.1 — tests for lib/radiology-images.ts.
 
-import test from "node:test";
+// Assertions stay on node:assert/strict so the expected values are
+// unchanged; only the runner moved to vitest.
+import { test } from "vitest";
 import assert from "node:assert/strict";
-import {
-  normalizeRadiologyImages,
-  resolveImageSrc,
-} from "../src/lib/radiology-images.ts";
+import { normalizeRadiologyImages, resolveImageSrc } from "../src/lib/radiology-images.ts";
 
 test("normalizeRadiologyImages: empty / null / undefined", () => {
   for (const empty of [null, undefined, ""]) {
@@ -14,10 +13,7 @@ test("normalizeRadiologyImages: empty / null / undefined", () => {
 });
 
 test("normalizeRadiologyImages: array of strings", () => {
-  const out = normalizeRadiologyImages([
-    "radiology/a.png",
-    "radiology/b.png",
-  ]);
+  const out = normalizeRadiologyImages(["radiology/a.png", "radiology/b.png"]);
   assert.deepEqual(out, ["radiology/a.png", "radiology/b.png"]);
 });
 
@@ -46,11 +42,7 @@ test("normalizeRadiologyImages: object without any known key is skipped", () => 
 });
 
 test("normalizeRadiologyImages: empty string is skipped", () => {
-  const out = normalizeRadiologyImages([
-    "radiology/a.png",
-    "",
-    "radiology/b.png",
-  ]);
+  const out = normalizeRadiologyImages(["radiology/a.png", "", "radiology/b.png"]);
   assert.deepEqual(out, ["radiology/a.png", "radiology/b.png"]);
 });
 
@@ -95,8 +87,5 @@ test("resolveImageSrc: /<key> (absolute path) passes through", () => {
 });
 
 test("resolveImageSrc: relative key → /api/storage/objects/<key>", () => {
-  assert.equal(
-    resolveImageSrc("radiology/abc.png"),
-    "/api/storage/objects/radiology/abc.png",
-  );
+  assert.equal(resolveImageSrc("radiology/abc.png"), "/api/storage/objects/radiology/abc.png");
 });

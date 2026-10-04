@@ -5,21 +5,27 @@
 
 import type { AnalysisOptions } from "./types";
 
+/**
+ * `labelKey` rather than `label`: this catalogue is a static module with no
+ * React context, so the human-readable name is resolved through i18next at
+ * render time in `AnalysisBuilder`. `value` is the API contract and must not
+ * change.
+ */
 export const ANALYSIS_TYPES = [
-  { value: "descriptive", label: "Descriptive" },
-  { value: "ttest", label: "T-Test" },
-  { value: "anova", label: "ANOVA" },
-  { value: "chisquare", label: "Chi-Square" },
-  { value: "correlation", label: "Correlation" },
-  { value: "regression", label: "Linear Regression" },
-  { value: "normality", label: "Normality" },
-  { value: "mannwhitney", label: "Mann–Whitney U" },
-  { value: "wilcoxon", label: "Wilcoxon" },
-  { value: "kruskalwallis", label: "Kruskal–Wallis" },
-  { value: "friedman", label: "Friedman" },
-  { value: "logistic", label: "Logistic Regression" },
-  { value: "reliability", label: "Reliability (α)" },
-  { value: "pca", label: "PCA / Factor" },
+  { value: "descriptive", labelKey: "analysis.catalogue.descriptive" },
+  { value: "ttest", labelKey: "analysis.catalogue.ttest" },
+  { value: "anova", labelKey: "analysis.catalogue.anova" },
+  { value: "chisquare", labelKey: "analysis.catalogue.chisquare" },
+  { value: "correlation", labelKey: "analysis.catalogue.correlation" },
+  { value: "regression", labelKey: "analysis.catalogue.regression" },
+  { value: "normality", labelKey: "analysis.catalogue.normality" },
+  { value: "mannwhitney", labelKey: "analysis.catalogue.mannwhitney" },
+  { value: "wilcoxon", labelKey: "analysis.catalogue.wilcoxon" },
+  { value: "kruskalwallis", labelKey: "analysis.catalogue.kruskalwallis" },
+  { value: "friedman", labelKey: "analysis.catalogue.friedman" },
+  { value: "logistic", labelKey: "analysis.catalogue.logistic" },
+  { value: "reliability", labelKey: "analysis.catalogue.reliability" },
+  { value: "pca", labelKey: "analysis.catalogue.pca" },
 ] as const;
 
 export type AnalysisTypeValue = (typeof ANALYSIS_TYPES)[number]["value"];

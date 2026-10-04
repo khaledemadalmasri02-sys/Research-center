@@ -1,3 +1,10 @@
+// @vitest-environment node
+//
+// Runs in the `node` environment so `Blob` / `Response` come from Node rather
+// than jsdom, matching how the reporter is mocked in `withMockBrowser` below.
+// The dev/prod branch is driven explicitly by `vi.stubEnv("DEV", false)` in
+// `beforeEach`.
+
 // P1.18 — tests for the crash reporter.
 //
 // The crash-reporter is a pure TS module: it dedups reports, sends
@@ -5,18 +12,25 @@
 // and the dev-mode console.error path by mocking `import.meta.env.DEV`
 // via a side-effect import below.
 
-import test from "node:test";
+// Assertions stay on node:assert/strict so the expected values are
+// unchanged; only the runner moved to vitest.
+import { test, beforeEach, afterEach, vi } from "vitest";
 import assert from "node:assert/strict";
-import {
-  reportCrash,
-  _resetCrashDedup,
-  type CrashReport,
-} from "../src/lib/crash-reporter.ts";
+import { reportCrash, _resetCrashDedup, type CrashReport } from "../src/lib/crash-reporter.ts";
 
 // Run before every test so the in-memory dedup map doesn't leak
 // state between tests.
-test.beforeEach(() => {
+beforeEach(() => {
   _resetCrashDedup();
+  // These tests all assert the *prod* branch. vitest sets
+  // `import.meta.env.DEV === true` in every environment, which would send
+  // `reportCrash()` down the dev console.error path; `node --test` (the
+  // previous runner) left `import.meta.env` undefined. Force the prod branch.
+  vi.stubEnv("DEV", false);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
 });
 
 // `import.meta.env.DEV` is a build-time constant in Vite but is
@@ -36,10 +50,7 @@ function withMockBrowser(run: () => void): void {
     });
   }
   const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const originalNavigator = Object.getOwnPropertyDescriptor(
-    globalThis,
-    "navigator",
-  );
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
   setProp(globalThis, "window", {
     location: { href: "https://test/" },
     addEventListener: () => {},
@@ -70,10 +81,7 @@ function withMockBrowser(run: () => void): void {
 }
 
 function beacons(): Array<{ url: string; data: Blob }> {
-  return (
-    (globalThis as { __beacons?: Array<{ url: string; data: Blob }> })
-      .__beacons ?? []
-  );
+  return (globalThis as { __beacons?: Array<{ url: string; data: Blob }> }).__beacons ?? [];
 }
 
 function makeReport(overrides: Partial<CrashReport> = {}): CrashReport {
@@ -133,20 +141,17 @@ test("fallback to fetch when sendBeacon is unavailable", () => {
       writable: true,
     });
     const originalFetch = globalThis.fetch;
-    let fetched: { url: string; init?: RequestInit } | null = null;
-    (globalThis as { fetch: typeof fetch }).fetch = ((
-      url: string | URL,
-      init?: RequestInit,
-    ) => {
-      fetched = { url: String(url), init };
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    (globalThis as { fetch: typeof fetch }).fetch = ((url: string | URL, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
       return Promise.resolve(new Response(null, { status: 204 }));
     }) as typeof fetch;
     try {
       reportCrash(makeReport());
       // fetch was called.
-      assert.ok(fetched, "fetch should have been called");
-      assert.equal(fetched!.url, "/api/crash-report");
-      assert.equal(fetched!.init?.method, "POST");
+      assert.equal(calls.length, 1, "fetch should have been called");
+      assert.equal(calls[0].url, "/api/crash-report");
+      assert.equal(calls[0].init?.method, "POST");
     } finally {
       (globalThis as { fetch: typeof fetch }).fetch = originalFetch;
     }
@@ -173,4 +178,3 @@ test("never throws even if everything fails", () => {
     }
   });
 });
-

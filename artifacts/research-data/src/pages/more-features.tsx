@@ -69,7 +69,14 @@ const FEATURES: FeatureMeta[] = [
 export default function MoreFeatures() {
   const { t } = useTranslation();
   const { canAdminAccess, canEdit } = useAuth();
-  const desktop = isDesktopMode() ? useDesktopOptional() : null;
+  /**
+   * MUST call the hook unconditionally. `isDesktopMode() ? useDesktopOptional()
+   * : null` changes the hook count the moment the viewport crosses 767px, and
+   * React throws "Rendered fewer hooks than expected" -> ErrorBoundary blanks
+   * the whole app on a tablet rotate / browser resize.
+   */
+  const desktopCtx = useDesktopOptional();
+  const desktop = desktopCtx && isDesktopMode() ? desktopCtx : null;
 
   const visible = FEATURES.filter((f) => {
     if (f.adminOnly && !canAdminAccess) return false;
@@ -114,7 +121,7 @@ export default function MoreFeatures() {
                   key={f.key}
                   type="button"
                   onClick={() => handleOpen(f)}
-                  className="block w-full text-left cursor-pointer"
+                  className="block w-full cursor-pointer text-start"
                 >
                   {content}
                 </button>
@@ -130,7 +137,7 @@ export default function MoreFeatures() {
         </div>
 
         {visible.length === 0 && (
-          <p className={cn("text-sm text-muted-foreground")}>No additional features available for your role.</p>
+          <p className={cn("text-sm text-muted-foreground")}>{t("features.noneForRole")}</p>
         )}
       </div>
     </Layout>

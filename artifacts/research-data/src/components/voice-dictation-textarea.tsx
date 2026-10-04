@@ -3,6 +3,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Mic, Square, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { correctMedicalText, type Correction } from "@/lib/medical-correction";
+import { useTranslation } from "react-i18next";
 
 // ── Language options ───────────────────────────────────────────────────────────
 // Groq Whisper auto-detects language — these are ISO-639-1 hints sent as a param.
@@ -60,6 +61,7 @@ interface Props extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
 }
 
 export function VoiceDictationTextarea({ value, onChange, className, ...rest }: Props) {
+  const { t } = useTranslation();
   const [phase,       setPhase]       = useState<Phase>("idle");
   const [corrections, setCorrections] = useState<Correction[]>([]);
   const [error,       setError]       = useState<string | null>(null);
@@ -283,7 +285,7 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
       {/* Corrections strip */}
       {isDone && corrections.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 px-3 py-2 bg-teal-50 border border-teal-200 rounded-md text-xs">
-          <span className="text-teal-700 font-medium shrink-0">Auto-corrected:</span>
+          <span className="text-teal-700 font-medium shrink-0">{t("dictation.autoCorrected")}</span>
           {corrections.map((c, i) => (
             <span
               key={i}
@@ -299,7 +301,7 @@ export function VoiceDictationTextarea({ value, onChange, className, ...rest }: 
             type="button"
             onClick={dismiss}
             className="ml-auto text-muted-foreground hover:text-foreground shrink-0"
-            title="Dismiss"
+            title={t("dictation.dismiss")}
           >
             <X className="w-3.5 h-3.5" />
           </button>

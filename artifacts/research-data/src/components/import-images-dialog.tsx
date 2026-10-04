@@ -1,14 +1,26 @@
-import { useState, useRef } from "react";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { useState, useRef, useMemo } from "react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { FormRow } from "@/components/field-row";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
+import { useTranslation } from "react-i18next";
 import { Image as ImageIcon, Upload, Link, Loader2, Check, X } from "lucide-react";
 import { getListPatientsQueryKey } from "@workspace/api-client-react";
+import {
+  PatientCombobox,
+  type PatientOption,
+} from "@/components/patient-combobox";
 
 type Props = {
   open: boolean;
@@ -17,9 +29,15 @@ type Props = {
 };
 
 type UploadFile = {
+  /** Stable React key. `key={index}` made React reuse the wrong row after a
+   *  removal, which in this table means showing one file's assignment next to
+   *  another file's name. */
+  uid: string;
   file: File;
-  detectedPatientId: string | null;
-  isProcessing: boolean;
+  /** Filename-derived *suggestion* only. Never applied without confirmation. */
+  suggestedPatientId: string | null;
+  /** The operator's confirmed choice. Unset => the file is NOT uploaded. */
+  patient: PatientOption | null;
   error?: string;
 };
 
@@ -38,7 +56,7 @@ function extractPatientIdFromFilename(filename: string): string | null {
   for (const pattern of PATIENT_ID_PATTERNS) {
     const match = name.match(pattern);
     if (match?.[1]) {
-      const digits = match[1].replace(/\D/g, '');
+      const digits = match[1].replace(/\D/g, "");
       if (digits.length >= 4) {
         return `PAT${digits}`;
       }
@@ -47,41 +65,60 @@ function extractPatientIdFromFilename(filename: string): string | null {
   return null;
 }
 
-export function ImportImagesDialog({ open, onOpenChange, batchSize = 5 }: Props) {
+let uidCounter = 0;
+const nextUid = () => `img-${++uidCounter}`;
+
+export function ImportImagesDialog({ open, onOpenChange }: Props) {
+  const { t } = useTranslation();
   const [tab, setTab] = useState<"upload" | "urls">("upload");
   const [urlInput, setUrlInput] = useState("");
-  const [patientId, setPatientId] = useState("");
   const [uploading, setUploading] = useState(false);
   const [currentBatch, setCurrentBatch] = useState<number>(0);
-  const [uploadedCount, setUploadedCount] = useState<number>(0);
-  const [failedCount, setFailedCount] = useState<number>(0);
   const [totalFiles, setTotalFiles] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
   const [files, setFiles] = useState<UploadFile[]>([]);
+  /** Default patient for the URL tab. */
+  const [urlPatient, setUrlPatient] = useState<PatientOption | null>(null);
 
   const handleFiles = (selectedFiles: FileList | null) => {
     if (!selectedFiles) return;
-    const newFiles = Array.from(selectedFiles).map(file => ({
+    const newFiles = Array.from(selectedFiles).map((file) => ({
+      uid: nextUid(),
       file,
-      detectedPatientId: extractPatientIdFromFilename(file.name),
-      isProcessing: false,
+      suggestedPatientId: extractPatientIdFromFilename(file.name),
+      patient: null,
     }));
-    setFiles(prev => [...prev, ...newFiles]);
+    setFiles((prev) => [...prev, ...newFiles]);
   };
+
+  const assigned = useMemo(() => files.filter((f) => f.patient !== null), [files]);
+  const unassignedCount = files.length - assigned.length;
+  const canUpload = files.length > 0 && unassignedCount === 0;
 
   const handleFileUploads = async () => {
     if (files.length === 0) {
-      toast({ title: "No files selected", description: "Please select image files to upload.", variant: "destructive" });
+      toast({ title: t("common.unknown"), variant: "destructive" });
+      return;
+    }
+    /**
+     * HARD GATE. Previously a file with no detected patient id was flagged in
+     * amber (~2.9:1 contrast) and then uploaded anyway, which allowed a
+     * radiology image to be attached to the wrong — or a nonexistent —
+     * patient with no confirmation and no existence check.
+     */
+    if (unassignedCount > 0) {
+      toast({
+        title: t("importImages.unassignedWarning", { count: unassignedCount }),
+        variant: "destructive",
+      });
       return;
     }
 
     setUploading(true);
     setCurrentBatch(0);
-    setUploadedCount(0);
-    setFailedCount(0);
     const total = files.length;
     setTotalFiles(total);
 
@@ -89,7 +126,7 @@ export function ImportImagesDialog({ open, onOpenChange, batchSize = 5 }: Props)
     let failCount = 0;
     const errors: string[] = [];
 
-    // Process uploads SEQUENTIALLY to avoid race conditions with same-patient uploads
+    // Sequential: same-patient uploads must not race.
     for (let i = 0; i < files.length; i++) {
       const item = files[i];
       setCurrentBatch(i + 1);
@@ -108,7 +145,9 @@ export function ImportImagesDialog({ open, onOpenChange, batchSize = 5 }: Props)
           method: "POST",
           headers: { "Content-Type": "application/json", credentials: "include" },
           body: JSON.stringify({
-            patientId: item.detectedPatientId || undefined,
+            // Always the *confirmed* patient, never the filename guess.
+            patientId: item.patient?.patientId ?? String(item.patient?.recordId ?? ""),
+            recordId: item.patient?.recordId,
             filename: item.file.name,
             contentType: item.file.type,
             fileData: base64Data,
@@ -118,105 +157,119 @@ export function ImportImagesDialog({ open, onOpenChange, batchSize = 5 }: Props)
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
           failCount++;
-          item.error = err.error || "Upload failed";
-          errors.push(item.error!);
+          const message = (err as { error?: string }).error || t("importImages.failed");
+          setFiles((prev) =>
+            prev.map((f) => (f.uid === item.uid ? { ...f, error: message } : f)),
+          );
+          errors.push(message);
         } else {
           successCount++;
         }
       } catch {
         failCount++;
-        item.error = "Network error";
-        errors.push("Network error");
+        setFiles((prev) =>
+          prev.map((f) => (f.uid === item.uid ? { ...f, error: t("common.unknown") } : f)),
+        );
+        errors.push(t("common.unknown"));
       }
-
-      setUploadedCount(successCount);
-      setFailedCount(failCount);
     }
 
     setUploading(false);
     setCurrentBatch(0);
-    setTotalFiles(total);
     queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
     toast({
-      title: "Upload Complete",
-      description: `${successCount} file(s) uploaded${failCount > 0 ? `, ${failCount} failed` : ""}${errors.length > 0 ? ` - ${errors.slice(0,2).join("; ")}` : ""}`,
+      title: t("importImages.uploaded", { count: successCount }),
+      description:
+        failCount > 0 ? t("importExcel.resultFailedCount", { count: failCount }) : undefined,
+      variant: failCount > 0 ? "destructive" : "default",
     });
-    onOpenChange(false);
-    setFiles([]);
+    if (failCount === 0) {
+      onOpenChange(false);
+      setFiles([]);
+    }
     setUrlInput("");
   };
 
   const handleUrlImport = async () => {
-    const urls = urlInput.split('\n').map(l => l.trim()).filter(l => l && (l.startsWith('http://') || l.startsWith('https://')));
-    
+    const urls = urlInput
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && (l.startsWith("http://") || l.startsWith("https://")));
+
     if (urls.length === 0) {
-      toast({ title: "No valid URLs", description: "Please enter image URLs (one per line).", variant: "destructive" });
+      toast({ title: t("importExcel.noValidData"), variant: "destructive" });
+      return;
+    }
+    if (!urlPatient) {
+      toast({ title: t("importImages.choosePatient"), variant: "destructive" });
       return;
     }
 
     setUploading(true);
-    setUploadedCount(urls.length);
-    setCurrentBatch(1);
     setTotalFiles(1);
+    setCurrentBatch(1);
 
     try {
       const res = await fetch("/api/patients/batch-import-images", {
         method: "POST",
         headers: { "Content-Type": "application/json", credentials: "include" },
-        body: JSON.stringify({ patientId: patientId.trim() || undefined, imageUrls: urls }),
+        body: JSON.stringify({
+          patientId: urlPatient.patientId ?? String(urlPatient.recordId),
+          recordId: urlPatient.recordId,
+          imageUrls: urls,
+        }),
       });
       const data = await res.json();
 
-      if (res.ok) {
-        const linked = data.results?.filter((r: any) => r.status === "linked").length ?? data.uploaded;
-        const orphaned = data.results?.filter((r: any) => r.status === "orphaned").length ?? 0;
-        toast({
-          title: "Import Complete",
-          description: `${linked} image(s) linked to patients${orphaned ? `, ${orphaned} not linked (no matching patient)` : ""}.`,
-        });
-        onOpenChange(false);
-        setUrlInput("");
-        setPatientId("");
-        queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
-      } else {
-        toast({ title: "Import Failed", description: data.error || "Unknown error", variant: "destructive" });
+      if (!res.ok) {
+        throw new Error(data?.error || t("importImages.failed"));
       }
-    } catch {
-      toast({ title: "Import Failed", description: "Network error", variant: "destructive" });
+      const linked = data.results?.filter((r: { status: string }) => r.status === "linked").length ?? data.uploaded;
+      const orphaned =
+        data.results?.filter((r: { status: string }) => r.status === "orphaned").length ?? 0;
+      toast({
+        title: t("importImages.uploaded", { count: linked }),
+        description: orphaned
+          ? t("importExcel.resultFailedCount", { count: orphaned })
+          : undefined,
+        variant: orphaned > 0 ? "destructive" : "default",
+      });
+      onOpenChange(false);
+      setUrlInput("");
+      setUrlPatient(null);
+      queryClient.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+    } catch (e) {
+      toast({
+        title: t("importImages.failed"),
+        description: (e as Error).message || t("common.unknown"),
+        variant: "destructive",
+      });
     }
 
     setUploading(false);
     setCurrentBatch(0);
-    setUploadedCount(0);
-    setFailedCount(0);
     setTotalFiles(0);
-  };
-
-  const clearFiles = () => {
-    setFiles([]);
   };
 
   const progress = totalFiles > 0 ? Math.round((currentBatch / totalFiles) * 100) : 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-xl max-h-[90vh] flex flex-col">
+      <DialogContent className="sm:max-w-3xl max-h-[90vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Import Images</DialogTitle>
-          <p className="text-sm text-muted-foreground">
-            Upload images or import from URLs. Patient IDs are auto-detected from filenames.
-          </p>
+          <DialogTitle>{t("importImages.title")}</DialogTitle>
+          <DialogDescription>{t("importImages.description")}</DialogDescription>
         </DialogHeader>
 
-        <Tabs value={tab} onValueChange={setTab as any} className="flex-1 flex flex-col">
+        <Tabs value={tab} onValueChange={setTab as never} className="flex-1 flex flex-col">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="upload" className="cursor-pointer">
               <Upload className="w-4 h-4 mr-2" />
-              Upload Files
+              {t("importExcel.uploadTab")}
             </TabsTrigger>
             <TabsTrigger value="urls" className="cursor-pointer">
               <Link className="w-4 h-4 mr-2" />
-              Import from URLs
+              {t("importExcel.urlsTab")}
             </TabsTrigger>
           </TabsList>
 
@@ -227,114 +280,199 @@ export function ImportImagesDialog({ open, onOpenChange, batchSize = 5 }: Props)
                 accept="image/*"
                 multiple
                 ref={fileInputRef}
-                className="hidden"
+                className="sr-only"
+                aria-label={t("importExcel.chooseFiles")}
                 onChange={(e) => {
                   handleFiles(e.target.files);
                   e.target.value = "";
                 }}
               />
-              
-              <div 
-                className="border-2 border-dashed border-border rounded-lg p-8 text-center hover:border-primary transition-colors cursor-pointer"
+
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                className="h-auto w-full flex-col gap-2 border-2 border-dashed border-border py-8 hover:border-primary"
                 onClick={() => fileInputRef.current?.click()}
               >
-                <Upload className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-                <p className="font-medium mb-1">Click to select images</p>
-                <p className="text-xs text-muted-foreground">Support multiple files (JPG, PNG, etc.)</p>
-              </div>
+                <Upload className="w-8 h-8 text-muted-foreground" />
+                <span className="font-medium">{t("importImages.assignmentTitle")}</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  {t("importExcel.chooseFilesHint")}
+                </span>
+              </Button>
             </div>
 
             {files.length > 0 && (
-              <div className="space-y-2 max-h-60 overflow-y-auto">
-                <h4 className="text-sm font-medium">Selected Files ({files.length})</h4>
-                {files.map((item, i) => (
-                  <div key={i} className="flex items-center gap-3 p-2 border rounded bg-muted/20">
-                    <div className="text-sm flex-1">
-                      <span className="font-medium block truncate">{item.file.name}</span>
-                      {item.detectedPatientId ? (
-                        <span className="text-xs text-muted-foreground">Patient ID: <span className="font-mono bg-white px-1 rounded">{item.detectedPatientId}</span></span>
-                      ) : (
-                        <span className="text-xs text-amber-600">⚠ No patient ID detected</span>
-                      )}
-                    </div>
-                    {item.error && (
-                  <div className="text-xs text-destructive" title={item.error}>
-                    <X className="w-4 h-4 inline" />
-                    {item.error.length > 30 ? item.error.slice(0, 30) + "…" : item.error}
-                  </div>
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium">
+                  {t("importImages.assignmentTitle")} ({assigned.length}/{files.length})
+                </h4>
+
+                {unassignedCount > 0 && (
+                  <p
+                    role="alert"
+                    className="rounded-md border border-amber-500 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+                  >
+                    {t("importImages.unassignedWarning", { count: unassignedCount })}
+                  </p>
                 )}
-                  </div>
-                ))}
-                <Button variant="outline" size="sm" onClick={clearFiles}>
-                  Clear All
+
+                {/* file -> patient assignment table (pre-upload) */}
+                <ul className="space-y-2 max-h-64 overflow-y-auto">
+                  {files.map((item) => (
+                    <li
+                      key={item.uid}
+                      className="flex flex-wrap items-center gap-3 p-2 border rounded bg-muted/20"
+                    >
+                      <ImageIcon aria-hidden className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-[8rem] flex-1">
+                        <span className="text-sm font-medium block truncate">{item.file.name}</span>
+                        {item.suggestedPatientId && !item.patient && (
+                          <span className="text-xs text-muted-foreground">
+                            {t("importImages.inferredPatient")}:{" "}
+                            <span className="font-mono">{item.suggestedPatientId}</span>
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="w-[220px] shrink-0">
+                        <PatientCombobox
+                          value={item.patient}
+                          onChange={(v) =>
+                            setFiles((prev) =>
+                              prev.map((f) =>
+                                f.uid === item.uid ? { ...f, patient: v, error: undefined } : f,
+                              ),
+                            )
+                          }
+                          placeholder={t("importImages.choosePatient")}
+                          invalid={!item.patient}
+                        />
+                      </div>
+
+                      {!uploading && (
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          aria-label={`${t("common.delete")}: ${item.file.name}`}
+                          onClick={() => setFiles((prev) => prev.filter((f) => f.uid !== item.uid))}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      )}
+
+                      {item.error && (
+                        <span className="text-xs text-destructive" role="status">
+                          {item.error.length > 40 ? `${item.error.slice(0, 40)}…` : item.error}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+
+                <Button variant="outline" size="sm" onClick={() => setFiles([])} disabled={uploading}>
+                  {t("common.delete")}
                 </Button>
               </div>
             )}
 
             {uploading && totalFiles > 0 && (
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
+                <div
+                  className="flex items-center gap-2"
+                  role="status"
+                  aria-live="polite"
+                >
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-sm">Batch {currentBatch} of {totalFiles}</span>
+                  <span className="text-sm">
+                    {t("importExcel.progress", { done: currentBatch, total: totalFiles })}
+                  </span>
                 </div>
                 <Progress value={progress} className="h-2" />
               </div>
             )}
 
-            <Button onClick={handleFileUploads} disabled={uploading || files.length === 0} className="w-full">
+            <Button
+              onClick={handleFileUploads}
+              disabled={uploading || !canUpload}
+              className="w-full"
+              title={unassignedCount > 0 ? t("importImages.unassignedWarning", { count: unassignedCount }) : undefined}
+            >
+              {uploading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Check className="w-4 h-4 mr-2" />
+              )}
               {uploading
-                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                : <Check className="w-4 h-4 mr-2" />
-              }
-              Upload {files.length} File{files.length !== 1 ? "s" : ""}
+                ? t("importImages.uploading")
+                : t("importImages.upload", { count: files.length })}
             </Button>
           </TabsContent>
 
           <TabsContent value="urls" className="flex-1 flex flex-col gap-4 mt-4">
             <div className="space-y-2">
-              <Label>Patient ID (optional)</Label>
-              <Input
-                type="text"
-                placeholder="e.g. 1404343 — applies to all URLs below"
-                value={patientId}
-                onChange={(e) => setPatientId(e.target.value)}
-                disabled={uploading}
-              />
-              <p className="text-xs text-muted-foreground">Leave blank to auto-detect each patient from the image filename.</p>
-              <Label>Image URLs (one per line)</Label>
-              <textarea
-                placeholder="https://example.com/image1.png&#10;https://example.com/image2.jpg"
-                className="w-full h-32 p-3 border rounded-md font-mono text-sm"
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                disabled={uploading}
-              />
-              <p className="text-xs text-muted-foreground">Paste image URLs (one per line). Each image will be downloaded and stored.</p>
+              <FormRow
+                label={t("importImages.choosePatient")}
+                required
+                markRequired
+                controlClassName="mt-0"
+              >
+                <PatientCombobox value={urlPatient} onChange={setUrlPatient} />
+              </FormRow>
+              <FormRow label={t("importImages.file")} controlClassName="mt-0">
+                <textarea
+                  placeholder={"https://example.com/image1.png\nhttps://example.com/image2.jpg"}
+                  aria-label={t("importImages.file")}
+                  className="w-full h-32 p-3 border rounded-md font-mono text-sm"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  disabled={uploading}
+                />
+              </FormRow>
+              <p className="text-xs text-muted-foreground">{t("importExcel.urlHint")}</p>
             </div>
 
             {uploading && totalFiles > 0 && (
               <div className="space-y-2">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2" role="status" aria-live="polite">
                   <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="text-sm">Importing…</span>
+                  <span className="text-sm">{t("importImages.uploading")}</span>
                 </div>
                 <Progress value={progress} className="h-2" />
               </div>
             )}
 
-            <Button onClick={handleUrlImport} disabled={uploading || urlInput.trim() === ""} className="w-full">
-              {uploading
-                ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                : <Link className="w-4 h-4 mr-2" />
-              }
-              Import URLs
+            <Button
+              onClick={handleUrlImport}
+              disabled={uploading || urlInput.trim() === "" || !urlPatient}
+              className="w-full"
+            >
+              {uploading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Link className="w-4 h-4 mr-2" />
+              )}
+              {t("importExcel.urlImport")}
             </Button>
           </TabsContent>
         </Tabs>
 
         <DialogFooter>
-            <Button variant="outline" onClick={() => { onOpenChange(false); setTab("upload"); setFiles([]); setUrlInput(""); setPatientId(""); setCurrentBatch(0); setUploadedCount(0); setFailedCount(0); setTotalFiles(0); }}>
-            Cancel
+          <Button
+            variant="outline"
+            onClick={() => {
+              onOpenChange(false);
+              setTab("upload");
+              setFiles([]);
+              setUrlInput("");
+              setUrlPatient(null);
+              setCurrentBatch(0);
+              setTotalFiles(0);
+            }}
+          >
+            {t("common.cancel")}
           </Button>
         </DialogFooter>
       </DialogContent>

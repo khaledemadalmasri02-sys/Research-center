@@ -1,71 +1,81 @@
-import { useEffect } from "react";
+import type { ReactNode } from "react";
 import { LayoutGrid, Palette, RotateCcw } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { cn } from "@/lib/utils";
+import { Z } from "./z-index";
+import { useDesktopMotion } from "./desktop-motion";
 
 interface Props {
-  x: number;
-  y: number;
-  onClose: () => void;
+  /** The surface the menu attaches to (the wallpaper, in practice). */
+  children: ReactNode;
   onOpenLauncher: () => void;
   onOpenThemes: () => void;
   onReset: () => void;
 }
 
+/**
+ * Desktop background context menu.
+ *
+ * Previously a hand-rolled `position: fixed` `<div>` at raw pointer
+ * coordinates with no viewport clamping (right-clicking near an edge put the
+ * menu off-screen), no `role="menu"`/`menuitem`, no focus handling and no
+ * keyboard path at all. Radix's `ContextMenu` supplies collision detection /
+ * flipping against the viewport, menu semantics, roving arrow-key focus, and
+ * the `contextmenu` event that the Menu key and Shift+F10 dispatch — so the
+ * menu is reachable without a mouse.
+ */
 export function DesktopContextMenu({
-  x,
-  y,
-  onClose,
+  children,
   onOpenLauncher,
   onOpenThemes,
   onReset,
 }: Props) {
   const { t } = useTranslation();
-
-  useEffect(() => {
-    const onDocClick = () => onClose();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("click", onDocClick);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("click", onDocClick);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [onClose]);
-
-  const Item = ({
-    icon: Icon,
-    label,
-    onClick,
-  }: {
-    icon: typeof LayoutGrid;
-    label: string;
-    onClick: () => void;
-  }) => (
-    <button
-      type="button"
-      className="flex w-full items-center gap-2 rounded px-3 py-1.5 text-left text-sm text-white transition hover:bg-white/10"
-      onClick={() => {
-        onClick();
-        onClose();
-      }}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </button>
-  );
+  const { reducedMotion } = useDesktopMotion();
 
   return (
-    <div
-      className="fixed z-50 min-w-[200px] rounded-lg border border-white/10 bg-zinc-900/95 p-1 shadow-2xl backdrop-blur"
-      style={{ left: x, top: y }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      <Item icon={LayoutGrid} label={t("desktop.showApps")} onClick={onOpenLauncher} />
-      <div className="my-1 h-px bg-white/10" />
-      <Item icon={Palette} label={t("desktop.themes")} onClick={onOpenThemes} />
-      <Item icon={RotateCcw} label={t("desktop.resetDesktop")} onClick={onReset} />
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+      {/*
+        The shared `ContextMenuContent` ships a 200 ms `animate-in` / `zoom-in-95`
+        / `fade-in-0`. A context menu is a *right-click* target, so 200 ms of
+        entrance reads as lag before the menu even appears. `data-[state=open]:`
+        and `data-[state=closed]:` variants outrank the unconditional
+        `duration-200` (specificity 0-2-0 vs 0-1-0), so open drops to 110 ms and
+        close to 70 ms. Under reduced motion `index.css` already collapses every
+        `transition-duration`/`animation-duration` to 0.001 ms, and the
+        `duration-*` utilities are dropped entirely for the same reason.
+      */}
+      <ContextMenuContent
+        className={cn(
+          "min-w-[200px] border-border bg-popover text-popover-foreground shadow-2xl backdrop-blur",
+          reducedMotion
+            ? "data-[state=open]:animate-none data-[state=closed]:animate-none"
+            : "data-[state=open]:duration-[110ms] data-[state=closed]:duration-[70ms] data-[state=open]:ease-out",
+        )}
+        style={{ zIndex: Z.menu }}
+      >
+        <ContextMenuItem onSelect={onOpenLauncher} className="gap-2 focus:bg-accent">
+          <LayoutGrid className="h-4 w-4" aria-hidden />
+          {t("desktop.showApps")}
+        </ContextMenuItem>
+        <ContextMenuSeparator className="bg-border" />
+        <ContextMenuItem onSelect={onOpenThemes} className="gap-2 focus:bg-accent">
+          <Palette className="h-4 w-4" aria-hidden />
+          {t("desktop.themes")}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onReset} className="gap-2 focus:bg-accent">
+          <RotateCcw className="h-4 w-4" aria-hidden />
+          {t("desktop.resetDesktop")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }

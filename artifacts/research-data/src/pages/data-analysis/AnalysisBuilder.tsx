@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Boxes, Download, Loader2, Play } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,23 @@ export function AnalysisBuilder({
   onExportRun,
 }: AnalysisBuilderProps) {
   const { t } = useTranslation();
+  /**
+   * Ten `<Label>`s in this form had no `htmlFor` and their controls no `id`,
+   * so every one of them was announced as an unnamed combobox / text box. Each
+   * field below now mints a stable id via `useId()` and pairs the two.
+   */
+  const ids = {
+    analysisType: useId(),
+    mode: useId(),
+    groupA_ttest: useId(),
+    groupB_ttest: useId(),
+    method: useId(),
+    groupA_mwu: useId(),
+    groupB_mwu: useId(),
+    components: useId(),
+    rotation: useId(),
+    alpha: useId(),
+  };
   const scaleVars = variables.filter((v) => v.measure === "scale");
   const catVars = variables.filter((v) => v.measure !== "scale");
   const allVars = variables;
@@ -63,7 +81,7 @@ export function AnalysisBuilder({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1 max-w-xs">
-          <Label>{t("analysis.analysisType")}</Label>
+          <Label htmlFor={ids.analysisType}>{t("analysis.analysisType")}</Label>
           <Select
             value={analysisType}
             onValueChange={(ty) => {
@@ -75,13 +93,13 @@ export function AnalysisBuilder({
               setOpts({});
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger id={ids.analysisType}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {ANALYSIS_TYPES.map((a) => (
                 <SelectItem key={a.value} value={a.value}>
-                  {a.label}
+                  {t(a.labelKey, a.value)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -101,9 +119,9 @@ export function AnalysisBuilder({
           {analysisType === "ttest" && (
             <>
               <div className="space-y-1">
-                <Label>{t("analysis.mode")}</Label>
+                <Label htmlFor={ids.mode}>{t("analysis.mode")}</Label>
                 <Select value={opts.mode as string} onValueChange={(m) => setOpt("mode", m)}>
-                  <SelectTrigger>
+                  <SelectTrigger id={ids.mode}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -122,12 +140,12 @@ export function AnalysisBuilder({
                   <VarSelect label={t("analysis.dependent")} vars={scaleVars} value={opts.dependent as string} onChange={(v) => setOpt("dependent", v)} />
                   <VarSelect label={t("analysis.groupVariable")} vars={catVars} value={opts.groupVariable as string} onChange={(v) => setOpt("groupVariable", v)} />
                   <div className="space-y-1">
-                    <Label>{t("analysis.groupA")}</Label>
-                    <Input value={(opts.groupA as string) ?? ""} onChange={(e) => setOpt("groupA", e.target.value)} />
+                    <Label htmlFor={ids.groupA_ttest}>{t("analysis.groupA")}</Label>
+                    <Input id={ids.groupA_ttest} value={(opts.groupA as string) ?? ""} onChange={(e) => setOpt("groupA", e.target.value)} />
                   </div>
                   <div className="space-y-1">
-                    <Label>{t("analysis.groupB")}</Label>
-                    <Input value={(opts.groupB as string) ?? ""} onChange={(e) => setOpt("groupB", e.target.value)} />
+                    <Label htmlFor={ids.groupB_ttest}>{t("analysis.groupB")}</Label>
+                    <Input id={ids.groupB_ttest} value={(opts.groupB as string) ?? ""} onChange={(e) => setOpt("groupB", e.target.value)} />
                   </div>
                   <div className="flex items-end gap-2">
                     <input
@@ -160,9 +178,9 @@ export function AnalysisBuilder({
           {analysisType === "correlation" && (
             <>
               <div className="space-y-1">
-                <Label>{t("analysis.method")}</Label>
+                <Label htmlFor={ids.method}>{t("analysis.method")}</Label>
                 <Select value={opts.method as string} onValueChange={(m) => setOpt("method", m)}>
-                  <SelectTrigger>
+                  <SelectTrigger id={ids.method}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -215,12 +233,12 @@ export function AnalysisBuilder({
               <VarSelect label={t("analysis.dependent")} vars={scaleVars} value={opts.dependent as string} onChange={(v) => setOpt("dependent", v)} />
               <VarSelect label={t("analysis.group")} vars={catVars} value={opts.group as string} onChange={(v) => setOpt("group", v)} />
               <div className="space-y-1">
-                <Label>{t("analysis.groupA")}</Label>
-                <Input value={(opts.groupA as string) ?? ""} onChange={(e) => setOpt("groupA", e.target.value)} />
+                <Label htmlFor={ids.groupA_mwu}>{t("analysis.groupA")}</Label>
+                <Input id={ids.groupA_mwu} value={(opts.groupA as string) ?? ""} onChange={(e) => setOpt("groupA", e.target.value)} />
               </div>
               <div className="space-y-1">
-                <Label>{t("analysis.groupB")}</Label>
-                <Input value={(opts.groupB as string) ?? ""} onChange={(e) => setOpt("groupB", e.target.value)} />
+                <Label htmlFor={ids.groupB_mwu}>{t("analysis.groupB")}</Label>
+                <Input id={ids.groupB_mwu} value={(opts.groupB as string) ?? ""} onChange={(e) => setOpt("groupB", e.target.value)} />
               </div>
             </>
           )}
@@ -287,19 +305,20 @@ export function AnalysisBuilder({
                 onToggle={(n) => toggleMulti("variables", n)}
               />
               <div className="space-y-1">
-                <Label>{t("analysis.components")}</Label>
+                <Label htmlFor={ids.components}>{t("analysis.components")}</Label>
                 <Input
+                  id={ids.components}
                   type="number"
                   min={1}
                   value={(opts.components as number) ?? 0}
                   onChange={(e) => setOpt("components", e.target.value)}
-                  placeholder="auto"
+                  placeholder={t("analysis.autoPlaceholder")}
                 />
               </div>
               <div className="space-y-1">
-                <Label>{t("analysis.rotation")}</Label>
+                <Label htmlFor={ids.rotation}>{t("analysis.rotation")}</Label>
                 <Select value={opts.rotation as string} onValueChange={(r) => setOpt("rotation", r)}>
-                  <SelectTrigger>
+                  <SelectTrigger id={ids.rotation}>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -312,8 +331,9 @@ export function AnalysisBuilder({
           )}
 
           <div className="space-y-1">
-            <Label>{t("analysis.alpha")}</Label>
+            <Label htmlFor={ids.alpha}>{t("analysis.alpha")}</Label>
             <Input
+              id={ids.alpha}
               type="number"
               step="0.01"
               value={(opts.alpha as number) ?? 0.05}

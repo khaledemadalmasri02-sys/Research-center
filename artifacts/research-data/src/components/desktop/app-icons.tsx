@@ -44,6 +44,16 @@ const PatientNewIcon: ComponentType<IconProps> = ({ className }) => (
   </Svg>
 );
 
+const PatientCorridorIcon: ComponentType<IconProps> = ({ className }) => (
+  <Svg className={className}>
+    <path d="M3 12c2-2 4-2 6 0s4 2 6 0 4-2 6 0" />
+    <path d="M3 8c2-2 4-2 6 0s4 2 6 0 4-2 6 0" opacity="0.5" />
+    <path d="M3 16c2-2 4-2 6 0s4 2 6 0 4-2 6 0" opacity="0.5" />
+    <circle cx="9" cy="11" r="1.4" />
+    <circle cx="15" cy="11" r="1.4" />
+  </Svg>
+);
+
 const CollectionsIcon: ComponentType<IconProps> = ({ className }) => (
   <Svg className={className}>
     <path d="M6 3h8l4 4v14H6z" />
@@ -257,6 +267,7 @@ export const APP_SVG_ICONS: Record<string, ComponentType<IconProps>> = {
   home: HomeIcon,
   patients: PatientsIcon,
   "patients/new": PatientNewIcon,
+  "patient-corridor": PatientCorridorIcon,
   collections: CollectionsIcon,
   "data-analysis": DataAnalysisIcon,
   feedback: FeedbackIcon,

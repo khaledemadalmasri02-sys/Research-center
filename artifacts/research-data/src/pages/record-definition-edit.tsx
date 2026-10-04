@@ -1,26 +1,33 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { Layout } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormRow } from "@/components/field-row";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Loader2, Plus, Trash2, Save, ArrowUp, ArrowDown, GripVertical, Type, Hash, Calendar, List, AlignLeft, Image as ImageIcon } from "lucide-react";
+import { Loader2, Plus, Trash2, Save, ArrowUp, ArrowDown, Type, Hash, Calendar, List, AlignLeft, Image as ImageIcon } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import { useToast } from "@/hooks/use-toast";
+
+/** Module-level so uids are unique across mounts within a session. */
+let nextUid = 1;
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { recordsApi, type FieldDef } from "@/lib/records";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 
-const FIELD_TYPES: { value: FieldDef["type"]; label: string; icon: typeof Type }[] = [
-  { value: "text", label: "Text", icon: Type },
-  { value: "number", label: "Number", icon: Hash },
-  { value: "date", label: "Date", icon: Calendar },
-  { value: "select", label: "Select", icon: List },
-  { value: "textarea", label: "Long text", icon: AlignLeft },
-  { value: "image", label: "Image", icon: ImageIcon },
+const FIELD_TYPES: { value: FieldDef["type"]; labelKey: string; icon: typeof Type }[] = [
+  { value: "text", labelKey: "recordDef.fieldTypeText", icon: Type },
+  { value: "number", labelKey: "recordDef.fieldTypeNumber", icon: Hash },
+  { value: "date", labelKey: "recordDef.fieldTypeDate", icon: Calendar },
+  { value: "select", labelKey: "recordDef.fieldTypeSelect", icon: List },
+  { value: "textarea", labelKey: "recordDef.fieldTypeTextarea", icon: AlignLeft },
+  { value: "image", labelKey: "recordDef.fieldTypeImage", icon: ImageIcon },
 ];
 
 function fieldIcon(type: FieldDef["type"]) {
@@ -50,32 +57,60 @@ function makeUniqueKey(label: string, fields: FieldDef[], selfIndex: number): st
 }
 
 function FieldPreview({ field }: { field: FieldDef }) {
+  const { t } = useTranslation();
   const Icon = fieldIcon(field.type);
+  const label = field.label || t("recordDef.untitledField");
+  const controlId = useId();
   return (
     <div className="space-y-1.5">
-      <Label className="flex items-center gap-1.5 text-sm">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-        {field.label || "Untitled field"}
-        {field.required && <span className="text-destructive"> *</span>}
-      </Label>
-      {field.type === "textarea" ? (
-        <Textarea disabled placeholder="Long text…" />
-      ) : field.type === "select" ? (
-        <Select disabled>
-          <SelectTrigger><SelectValue placeholder="— select —" /></SelectTrigger>
-        </Select>
-      ) : field.type === "image" ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground border border-dashed rounded-md px-3 py-2">
-          <ImageIcon className="h-4 w-4" /> Image upload
-        </div>
-      ) : (
-        <Input disabled type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"} placeholder={field.label} />
-      )}
+      {/*
+        The preview controls are `disabled`, so a `<label htmlFor>` would name a
+        control the user can never reach. The name is attached to the group
+        instead: `aria-labelledby` on the wrapper names both the heading and the
+        inert control below it, which is what a screen-reader user actually
+        needs to understand the preview.
+      */}
+      <span
+        id={`${controlId}-label`}
+        className="flex items-center gap-1.5 text-sm font-medium leading-none text-muted-foreground"
+      >
+        <Icon className="h-3.5 w-3.5" aria-hidden />
+        {label}
+        {field.required && (
+          <span className="text-destructive">
+            {" "}*<span className="sr-only"> ({t("common.required")})</span>
+          </span>
+        )}
+      </span>
+      <div role="group" aria-labelledby={`${controlId}-label`}>
+        {field.type === "textarea" ? (
+          <Textarea disabled placeholder={t("recordDef.phLongText")} aria-label={label} />
+        ) : field.type === "select" ? (
+          <Select disabled>
+            <SelectTrigger aria-label={label}>
+              <SelectValue placeholder={t("recordDef.phSelect")} />
+            </SelectTrigger>
+          </Select>
+        ) : field.type === "image" ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground border border-dashed rounded-md px-3 py-2">
+            <ImageIcon className="h-4 w-4" aria-hidden /> {t("recordDef.imageUpload")}
+          </div>
+        ) : (
+          <Input
+            disabled
+            type={field.type === "number" ? "number" : field.type === "date" ? "date" : "text"}
+            placeholder={field.label}
+            aria-label={label}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
 export default function RecordDefinitionEdit() {
+  const { t } = useTranslation();
+  const { toast } = useToast();
   const { id } = useParams();
   const definitionId = id ? Number(id) : undefined;
   const [, navigate] = useLocation();
@@ -83,6 +118,9 @@ export default function RecordDefinitionEdit() {
 
   const [name, setName] = useState("");
   const [fields, setFields] = useState<FieldDef[]>([]);
+  const initialRef = useRef<{ name: string; fields: FieldDef[] } | null>(null);
+  const [dirty, setDirty] = useState(false);
+  useUnsavedChanges(dirty);
 
   const { data, isLoading } = useQuery({
     queryKey: ["record-definition", definitionId],
@@ -93,28 +131,72 @@ export default function RecordDefinitionEdit() {
   useEffect(() => {
     if (data?.definition) {
       setName(data.definition.name);
-      setFields(data.definition.fields ?? []);
+      const hydrated = withUids(data.definition.fields ?? []);
+      setFields(hydrated as FieldDef[]);
+      initialRef.current = {
+        name: data.definition.name,
+        fields: data.definition.fields ?? [],
+      };
+      setDirty(false);
     }
   }, [data]);
 
+  useEffect(() => {
+    const init = initialRef.current;
+    if (!init) return;
+    const sameName = init.name === name;
+    const sameFields = JSON.stringify(init.fields) === JSON.stringify(fields);
+    setDirty(!(sameName && sameFields));
+  }, [name, fields]);
+
   const saveMutation = useMutation({
     mutationFn: () => {
-      if (definitionId) return recordsApi.updateDefinition(definitionId, { name, fields });
-      return recordsApi.createDefinition(name, fields);
+      // Strip the generated `_uid` before it reaches the API.
+      const payload = fields.map((f) => {
+        const { _uid, ...rest } = f as FieldDef & { _uid?: string };
+        return rest as FieldDef;
+      });
+      if (definitionId) return recordsApi.updateDefinition(definitionId, { name, fields: payload });
+      return recordsApi.createDefinition(name, payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["record-definitions"] });
       qc.invalidateQueries({ queryKey: ["collections-list"] });
+      toast({ title: t("records.updated") });
       navigate("/collections");
     },
+    onError: (e) =>
+      toast({
+        title: t("destructive.failed"),
+        description: (e as Error).message || t("common.unknown"),
+        variant: "destructive",
+      }),
   });
+
+  /**
+   * Give every field a stable React key. The list is reorderable (move up /
+   * move down) and removable, so `key={index}` reused the wrong DOM node after
+   * a move — an input kept the previous field's value.
+   */
+  function withUids(list: FieldDef[]): (FieldDef & { _uid: string })[] {
+    return list.map((f, i) => ({
+      ...f,
+      _uid: (f as FieldDef & { _uid?: string })._uid ?? `field-${nextUid++}`,
+    })) as (FieldDef & { _uid: string })[];
+  }
 
   function updateField(index: number, patch: Partial<FieldDef>) {
     setFields((fs) => fs.map((f, i) => (i === index ? { ...f, ...patch } : f)));
   }
 
+  const uidOf = (index: number) =>
+    (fields[index] as (FieldDef & { _uid?: string }) | undefined)?._uid ?? `field-${index}`;
+
   function addField() {
-    setFields((fs) => [...fs, { key: "", label: "", type: "text", required: false }]);
+    setFields((fs) => [
+      ...fs,
+      { key: "", label: "", type: "text", required: false, _uid: `field-${nextUid++}` } as FieldDef,
+    ]);
   }
 
   function move(index: number, dir: -1 | 1) {
@@ -152,65 +234,91 @@ export default function RecordDefinitionEdit() {
       <div className="max-w-5xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
-            {definitionId ? "Edit Collection" : "New Collection"}
+            {definitionId ? t("app.editCollection") : t("app.newCollection")}
           </h1>
-          <p className="text-muted-foreground mt-1">Define the fields users will fill in for each record.</p>
+          <p className="text-muted-foreground mt-1">{t("recordDef.subtitle")}</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-semibold">Collection details</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("recordDef.detailsTitle")}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                <Label htmlFor="coll-name" className="text-xs">Name</Label>
+                <Label htmlFor="coll-name" className="text-xs">{t("recordDef.nameLabel")}</Label>
                 <Input
                   id="coll-name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Research Samples"
+                  placeholder={t("recordDef.phName")}
                 />
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-semibold">Fields ({fields.length})</CardTitle>
+                <CardTitle className="text-sm font-semibold">
+                  {t("recordDef.fieldsTitle", { count: fields.length })}
+                </CardTitle>
                 <Button size="sm" variant="outline" onClick={addField}>
-                  <Plus className="h-4 w-4 mr-1" /> Add field
+                  <Plus className="h-4 w-4 me-1" aria-hidden /> {t("recordDef.addField")}
                 </Button>
               </CardHeader>
               <CardContent className="space-y-3">
                 {fields.length === 0 && (
                   <div className="text-center py-8 text-muted-foreground border border-dashed rounded-md">
-                    <p className="text-sm">No fields yet. Add one to get started.</p>
+                    <p className="text-sm">{t("recordDef.noFields")}</p>
                   </div>
                 )}
                 {fields.map((field, index) => {
                   const Icon = fieldIcon(field.type);
                   return (
-                    <div key={index} className="rounded-lg border bg-card p-3 space-y-3">
+                    /* Keyed by a stable uid: `key={index}` reused the wrong DOM
+                     * node after a move or removal, so an Arrow-up could carry
+                     * the previous field's input state with it. */
+                    <div key={uidOf(index)} className="rounded-lg border bg-card p-3 space-y-3">
                       <div className="flex items-center gap-2">
-                        <GripVertical className="h-4 w-4 text-muted-foreground/40" />
-                        <Icon className="h-4 w-4 text-primary" />
-                        <span className="text-sm font-medium flex-1 truncate">{field.label || "Untitled field"}</span>
+                        <Icon className="h-4 w-4 text-primary" aria-hidden />
+                        <span className="flex-1 truncate text-sm font-medium">
+                          {field.label || t("recordDef.untitledField")}
+                        </span>
                         <div className="flex items-center gap-1">
-                          <Button size="icon" variant="ghost" className="h-7 w-7" disabled={index === 0} onClick={() => move(index, -1)}>
-                            <ArrowUp className="h-4 w-4" />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            disabled={index === 0}
+                            aria-label={t("recordDef.moveUp", { label: field.label || index + 1 })}
+                            onClick={() => move(index, -1)}
+                          >
+                            <ArrowUp className="h-4 w-4" aria-hidden />
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-7 w-7" disabled={index === fields.length - 1} onClick={() => move(index, 1)}>
-                            <ArrowDown className="h-4 w-4" />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7"
+                            disabled={index === fields.length - 1}
+                            aria-label={t("recordDef.moveDown", { label: field.label || index + 1 })}
+                            onClick={() => move(index, 1)}
+                          >
+                            <ArrowDown className="h-4 w-4" aria-hidden />
                           </Button>
-                          <Button size="icon" variant="ghost" className="h-7 w-7 text-destructive" onClick={() => setFields((fs) => fs.filter((_, i) => i !== index))}>
-                            <Trash2 className="h-4 w-4" />
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-destructive"
+                            aria-label={t("recordDef.deleteField", { label: field.label || index + 1 })}
+                            onClick={() => setFields((fs) => fs.filter((_, i) => i !== index))}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden />
                           </Button>
                         </div>
                       </div>
 
                       <div className="grid grid-cols-12 gap-2">
                         <div className="col-span-5 space-y-1">
-                          <Label className="text-xs">Label</Label>
+                          <FormRow label={t("recordDef.label")} labelClassName="text-xs" controlClassName="mt-0">
                           <Input
                             value={field.label}
                             onChange={(e) => {
@@ -218,38 +326,44 @@ export default function RecordDefinitionEdit() {
                               updateField(index, { label, key: field.key || makeUniqueKey(label, fields, index) });
                             }}
                           />
+                          </FormRow>
                         </div>
                         <div className="col-span-4 space-y-1">
-                          <Label className="text-xs">Key</Label>
+                          <FormRow label={t("recordDef.key")} labelClassName="text-xs" controlClassName="mt-0">
                           <Input
                             value={field.key}
                             onChange={(e) => updateField(index, { key: makeUniqueKey(e.target.value, fields, index) })}
-                            placeholder="field_key"
+                            placeholder={t("recordDef.phKey")}
                           />
+                          </FormRow>
                         </div>
                         <div className="col-span-3 space-y-1">
-                          <Label className="text-xs">Type</Label>
+                          <FormRow label={t("recordDef.type")} labelClassName="text-xs" controlClassName="mt-0">
                           <Select
                             value={field.type}
                             onValueChange={(v) => updateField(index, { type: v as FieldDef["type"] })}
                           >
-                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectTrigger aria-label={t("recordDef.type")}><SelectValue /></SelectTrigger>
                             <SelectContent>
-                              {FIELD_TYPES.map((t) => (
-                                <SelectItem key={t.value} value={t.value}>
+                              {/* `ft`, not `t`: the map parameter used to shadow
+                                  the `t()` translator. */}
+                              {FIELD_TYPES.map((ft) => (
+                                <SelectItem key={ft.value} value={ft.value}>
                                   <span className="flex items-center gap-2">
-                                    <t.icon className="h-3.5 w-3.5" /> {t.label}
+                                    <ft.icon className="h-3.5 w-3.5" aria-hidden />{" "}
+                                    {t(ft.labelKey)}
                                   </span>
                                 </SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
+                          </FormRow>
                         </div>
                       </div>
 
                       {field.type === "select" && (
                         <div className="space-y-1">
-                          <Label className="text-xs">Options (comma separated)</Label>
+                          <FormRow label={t("recordDef.options")} labelClassName="text-xs" controlClassName="mt-0">
                           <Input
                             value={(field.options ?? []).join(", ")}
                             onChange={(e) =>
@@ -260,9 +374,10 @@ export default function RecordDefinitionEdit() {
                                   .filter(Boolean),
                               })
                             }
-                            placeholder="A, B, C"
+                            placeholder={t("recordDef.phOptions")}
                           />
-                          <div className="flex flex-wrap gap-1">
+                          </FormRow>
+                          <div className="mt-1 flex flex-wrap gap-1">
                             {(field.options ?? []).map((o) => (
                               <Badge key={o} variant="secondary" className="text-xs">{o}</Badge>
                             ))}
@@ -274,10 +389,11 @@ export default function RecordDefinitionEdit() {
                       <div className="flex items-center justify-between">
                         <label className="flex items-center gap-2 text-xs text-muted-foreground">
                           <Switch
+                            id={`${uidOf(index)}-required`}
                             checked={!!field.required}
                             onCheckedChange={(v) => updateField(index, { required: v })}
                           />
-                          Required field
+                          {t("recordDef.requiredField")}
                         </label>
                         <Badge variant="outline" className="text-xs">{field.type}</Badge>
                       </div>
@@ -287,11 +403,12 @@ export default function RecordDefinitionEdit() {
               </CardContent>
             </Card>
 
+            {/* Blocking validation, so it is announced rather than only coloured. */}
             {hasKeyProblem && (
-              <p className="text-sm text-destructive">
+              <p role="alert" className="text-sm text-destructive">
                 {emptyKeyCount > 0
-                  ? "Every field needs a label (it generates the key)."
-                  : `Duplicate field key(s): ${[...new Set(duplicateKeys)].join(", ")}. Keys must be unique.`}
+                  ? t("recordDef.errKeyRequired")
+                  : t("recordDef.errKeyDuplicate", { keys: [...new Set(duplicateKeys)].join(", ") })}
               </p>
             )}
 
@@ -300,11 +417,11 @@ export default function RecordDefinitionEdit() {
                 onClick={() => saveMutation.mutate()}
                 disabled={saveMutation.isPending || !name || hasKeyProblem}
               >
-                <Save className="h-4 w-4 mr-1" />
-                {saveMutation.isPending ? "Saving…" : "Save collection"}
+                <Save className="h-4 w-4 me-1" aria-hidden />
+                {saveMutation.isPending ? t("common.saving") : t("recordDef.save")}
               </Button>
               <Button variant="outline" onClick={() => navigate("/collections")}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </div>
@@ -313,12 +430,12 @@ export default function RecordDefinitionEdit() {
             <div className="sticky top-6">
               <Card>
                 <CardHeader>
-                  <CardTitle className="text-sm font-semibold">Live preview</CardTitle>
+                  <CardTitle className="text-sm font-semibold">{t("recordDef.livePreview")}</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <p className="text-xs text-muted-foreground">How the form will look for each record.</p>
+                  <p className="text-xs text-muted-foreground">{t("recordDef.livePreviewDesc")}</p>
                   {fields.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">Add fields to see a preview.</p>
+                    <p className="text-sm text-muted-foreground">{t("recordDef.previewEmpty")}</p>
                   ) : (
                     fields.map((f, i) => <FieldPreview key={i} field={f} />)
                   )}

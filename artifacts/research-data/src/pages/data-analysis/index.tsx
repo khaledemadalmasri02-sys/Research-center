@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { BarChart3 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Layout } from "@/components/layout";
+import { ErrorState } from "@/components/ui/states";
 import { apiJson } from "./api";
 import { DatasetView } from "./DatasetView";
 import { LandingView } from "./LandingView";
@@ -122,7 +123,7 @@ export default function DataAnalysis() {
         body: fd,
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) throw new Error(data.error || "Import failed");
+      if (!res.ok) throw new Error(data.error || t("analysis.importFailed"));
       setFile(null);
       setImportName("");
       setImportFormat("");
@@ -227,15 +228,25 @@ export default function DataAnalysis() {
       <div className="max-w-7xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <BarChart3 className="h-7 w-7 text-primary" /> {t("analysis.title")}
+            <BarChart3 className="h-7 w-7 text-primary" aria-hidden /> {t("analysis.title")}
           </h1>
           <p className="text-muted-foreground mt-1">{t("analysis.subtitle")}</p>
         </div>
 
         {error && (
-          <p className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2">
-            {error}
-          </p>
+          <ErrorState
+            title={t("analysis.errorTitle")}
+            description={error}
+            action={
+              <button
+                onClick={() => loadDatasets()}
+                className="text-sm font-medium text-primary underline-offset-2 hover:underline"
+              >
+                {t("analysis.retry")}
+              </button>
+            }
+            size="sm"
+          />
         )}
 
         {!selected && (

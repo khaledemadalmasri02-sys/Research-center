@@ -119,6 +119,26 @@ export const recordsApi = {
       json<{ ok: true }>(r),
     ),
 
+  /**
+   * PRIVACY (X22) — KNOWN, DOCUMENTED EXPOSURE.
+   *
+   * The search terms are sent as a URL **query string**. Free-text `q` here is
+   * a name, an MRN or a diagnosis, so it therefore lands in:
+   *   - the browser's address-bar history,
+   *   - the `Referer` header on any subsequent same-origin navigation,
+   *   - any proxy / tunnel / edge access log between the browser and the
+   *     api-server.
+   * Moving to a POST body is the fix, but `GET /api/records/:id/search` is
+   * implemented and consumed on the server, which is outside this change's
+   * ownership. The params are only sent when the caller supplies them (an
+   * empty search sends a bare path), which keeps the exposure proportional,
+   * but **do not treat this as a privacy control.**
+   *
+   * To close it properly: add `POST /api/records/:id/search` taking
+   * `{ q, filters, sort }` in the body, keep the GET as a deprecated
+   * non-PHI shim, and switch this function to the POST form. Until then, the
+   * `logpush` removal on the Worker is what stops the edge copy.
+   */
   searchRecords: (definitionId: number, params: { q?: string; filters?: Record<string, unknown>; sort?: Record<string, unknown> } = {}) => {
     const qs = new URLSearchParams();
     if (params.q) qs.set("q", params.q);

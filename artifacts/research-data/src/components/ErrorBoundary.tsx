@@ -1,8 +1,10 @@
 import { Component, type ErrorInfo, type ReactNode } from "react";
+import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AlertOctagon, RefreshCw } from "lucide-react";
 import { reportCrash } from "@/lib/crash-reporter";
+import { DURATION, EASE_OUT, shouldReduceMotion, useMotionPrefs } from "@/lib/motion";
 
 interface Props {
   children: ReactNode;
@@ -28,6 +30,40 @@ interface State {
  * never authenticated (the user can't log in if the app is broken)
  * and rate-limited per-IP at the Worker level.
  */
+/**
+ * Fallback shell for the error state.
+ *
+ * `role="alert"` stays on the STATIC outer node and the motion lives on an
+ * inner one. Assistive tech announces an alert when the node carrying the role
+ * enters the DOM; if the animated element were the alert, an entrance that
+ * starts at `opacity: 0` would leave the announcement describing something the
+ * user cannot see yet, and any future `visibility`/`display` change on the
+ * animated node would silently un-announce a crash. Static wrapper, animated
+ * contents: the alert is readable on the first frame and the entrance is
+ * decoration.
+ *
+ * A function component because it needs `useReducedMotion()`; the boundary
+ * itself stays a class (it has to be one).
+ */
+function ErrorFallbackShell({ children }: { children: ReactNode }) {
+  const reducedMotion = shouldReduceMotion(useMotionPrefs());
+  return (
+    <div
+      role="alert"
+      className="min-h-screen flex items-center justify-center p-6 bg-background text-foreground"
+    >
+      <motion.div
+        initial={reducedMotion ? false : { opacity: 0, scale: 0.985, y: 8 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={reducedMotion ? { duration: 0 } : { duration: DURATION.fast, ease: EASE_OUT }}
+        className="max-w-xl w-full"
+      >
+        {children}
+      </motion.div>
+    </div>
+  );
+}
+
 export class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false, error: null, componentStack: null };
 
@@ -43,7 +79,10 @@ export class ErrorBoundary extends Component<Props, State> {
       message: error.message,
       stack: error.stack,
       componentStack: info.componentStack ?? undefined,
-      url: typeof window !== "undefined" ? window.location.href : "(server)",
+      /* pathname ONLY. The crash report is POSTed to a logger; `href`
+       * carried `?tab=…` and `/patients/:id`, i.e. PHI and search terms,
+       * into a third-party log store. */
+      url: typeof window !== "undefined" ? window.location.pathname : "(server)",
       userAgent:
         typeof navigator !== "undefined" ? navigator.userAgent : "(server)",
       ts: new Date().toISOString(),
@@ -59,11 +98,8 @@ export class ErrorBoundary extends Component<Props, State> {
 
     const isDev = import.meta.env.DEV;
     return (
-      <div
-        role="alert"
-        className="min-h-screen flex items-center justify-center p-6 bg-background text-foreground"
-      >
-        <Card className="max-w-xl w-full">
+      <ErrorFallbackShell>
+        <Card>
           <CardHeader className="flex flex-row items-center gap-3">
             <AlertOctagon className="h-6 w-6 text-destructive" />
             <CardTitle>Something went wrong.</CardTitle>
@@ -72,7 +108,7 @@ export class ErrorBoundary extends Component<Props, State> {
             <p className="text-sm text-muted-foreground">
               The app hit an unexpected error. Your data is safe — reloading
               the page will start a fresh session. If this keeps happening,
-              please report it from the Help menu.
+              please contact your administrator with the time it happened.
             </p>
 
             {isDev && this.state.error && (
@@ -102,7 +138,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </div>
           </CardContent>
         </Card>
-      </div>
+      </ErrorFallbackShell>
     );
   }
 }

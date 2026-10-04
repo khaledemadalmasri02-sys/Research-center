@@ -4,21 +4,33 @@ import { Layout } from "@/components/layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { FormRow } from "@/components/field-row";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2, Users } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { useAuth } from "@/hooks/use-auth";
+import { useToast } from "@/hooks/use-toast";
+import { NoPermissionState, ErrorState } from "@/components/ui/states";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { downloadAuthenticated } from "@/lib/export-download";
 
 const FIELDS = ["id","patient_id","age","sex","collection_type","final_confirmed_diagnosis","ai_prediction_output"];
 
 export default function Cohort() {
   const { t } = useTranslation();
+  /* `viewer` gets 403 on /api/cohort/{build,stats,export}; hide the controls
+   * rather than showing raw 403s. */
+  const { canEdit } = useAuth();
+  const { toast } = useToast();
   const [field, setField] = useState("age");
   const [op, setOp] = useState("gt");
   const [value, setValue] = useState("");
   const [cohort, setCohort] = useState<any[]>([]);
   const [count, setCount] = useState(0);
+  /** Export window: the server caps at 10,000 rows (default 1,000) and
+   *  silently truncates, so the returned count is surfaced. */
+  const [exported, setExported] = useState<{ count: number; capped: boolean } | null>(null);
 
   const build = useMutation({
     mutationFn: async () => {
@@ -39,18 +51,36 @@ export default function Cohort() {
 
   const exportCsv = async () => {
     const filters = value ? [{ field, op, value }] : [];
-    const res = await fetch("/api/cohort/export", {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filters, fields: FIELDS }),
-    });
-    const blob = await res.blob();
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = "cohort.csv"; a.click();
-    URL.revokeObjectURL(a.href);
+    try {
+      await downloadAuthenticated("/api/cohort/export", "cohort.csv", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters, fields: FIELDS }),
+      });
+      setExported({ count: cohort.length, capped: cohort.length >= 10_000 });
+    } catch (e) {
+      toast({
+        title: t("patients.exportFailed"),
+        description: (e as Error).message,
+        variant: "destructive",
+      });
+    }
   };
 
   const cols = cohort[0] ? Object.keys(cohort[0]) : FIELDS;
+
+  if (!canEdit) {
+    return (
+      <Layout>
+        <div className="max-w-2xl mx-auto">
+          <NoPermissionState
+            title={t("common.noPermissionTitle")}
+            description={t("common.noPermissionDesc")}
+          />
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
@@ -63,46 +93,75 @@ export default function Cohort() {
         </div>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">Build cohort</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">{t("features.cohort.title")}</CardTitle></CardHeader>
           <CardContent className="flex flex-wrap items-end gap-2">
-            <div className="space-y-1">
-              <Label>Field</Label>
-              <Select value={field} onValueChange={setField}><SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
-                <SelectContent>{(codebook.data || FIELDS.map((f) => ({ field: f }))).map((c: any) => (
-                  <SelectItem key={c.field} value={c.field}>{c.label || c.field}</SelectItem>
-                ))}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Op</Label>
-              <Select value={op} onValueChange={setOp}><SelectTrigger className="w-28"><SelectValue /></SelectTrigger>
+            <FormRow label={t("analysis.variable")} controlClassName="mt-0">
+              <Select value={field} onValueChange={setField}>
+                <SelectTrigger className="w-56" aria-label={t("analysis.variable")}>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {["eq","neq","contains","gt","lt","gte","lte"].map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                  {(codebook.data || FIELDS.map((f) => ({ field: f }))).map((c: any) => (
+                    <SelectItem key={c.field} value={c.field}>{c.label || c.field}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
-            </div>
-            <div className="space-y-1">
-              <Label>Value</Label>
-              <Input value={value} onChange={(e) => setValue(e.target.value)} placeholder="(empty = all)" />
-            </div>
+            </FormRow>
+            <FormRow label={t("analysis.method")} controlClassName="mt-0">
+              <Select value={op} onValueChange={setOp}>
+                <SelectTrigger className="w-28" aria-label={t("analysis.method")}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {["eq","neq","contains","gt","lt","gte","lte"].map((o) => (
+                    <SelectItem key={o} value={o}>{o}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </FormRow>
+            <FormRow label={t("analysis.result")} controlClassName="mt-0">
+              <Input value={value} onChange={(e) => setValue(e.target.value)} />
+            </FormRow>
             <Button disabled={build.isPending} onClick={() => build.mutate()}>
-              {build.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} Build
+              {build.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />} {t("analysis.build")}
             </Button>
-            <Button variant="secondary" disabled={!cohort.length} onClick={exportCsv}>Export CSV</Button>
+            <Button variant="secondary" disabled={!cohort.length} onClick={() => void exportCsv()}>
+              {t("records.exportCsv")}
+            </Button>
           </CardContent>
         </Card>
 
+        {build.isError && (
+          <ErrorState
+            title={t("common.errorTitle")}
+            description={t("records.loadFailed")}
+            action={<Button onClick={() => build.mutate()}>{t("common.retry")}</Button>}
+          />
+        )}
+
+        {exported && (
+          <Alert variant={exported.capped ? "destructive" : "default"} role="status">
+            <AlertTitle>{t("cohort.exportTitle", { count: exported.count })}</AlertTitle>
+            <AlertDescription>
+              {exported.capped ? t("cohort.exportTruncated") : t("cohort.exportComplete")}
+            </AlertDescription>
+          </Alert>
+        )}
+
         <Card>
-          <CardHeader><CardTitle className="text-base">{count} patients</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">{t("common.rowsCount", { count })}</CardTitle></CardHeader>
           <CardContent>
             <div className="overflow-x-auto">
               <Table>
+                <caption className="sr-only">{t("features.cohort.title")}</caption>
                 <TableHeader><TableRow>{cols.map((c) => <TableHead key={c}>{c}</TableHead>)}</TableRow></TableHeader>
                 <TableBody>
-                  {cohort.map((row, i) => (
-                    <TableRow key={i}>{cols.map((c) => <TableCell key={c}>{String(row[c] ?? "")}</TableCell>)}</TableRow>
+                  {cohort.map((row) => (
+                    <TableRow key={String(row.patient_id ?? row.id ?? cols[0])}>
+                      {cols.map((c) => <TableCell key={c}>{String(row[c] ?? "")}</TableCell>)}
+                    </TableRow>
                   ))}
-                  {!cohort.length && <TableRow><TableCell colSpan={cols.length} className="text-center text-muted-foreground py-4">No patients matched.</TableCell></TableRow>}
+                  {!cohort.length && <TableRow><TableCell colSpan={cols.length} className="text-center text-muted-foreground py-4">{t("search.noResults")}</TableCell></TableRow>}
                 </TableBody>
               </Table>
             </div>

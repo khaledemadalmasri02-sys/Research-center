@@ -1,4 +1,6 @@
-import test from "node:test";
+// Assertions stay on node:assert/strict so the expected values are
+// unchanged; only the runner moved to vitest.
+import { test } from "vitest";
 import assert from "node:assert/strict";
 import { filterImportRows, isImportBlocked } from "../src/lib/import-filter.ts";
 
@@ -30,15 +32,22 @@ test("matches any of multiple keywords and excludes empty values", () => {
 
 test("returns all rows when filtering is disabled or incomplete", () => {
   assert.equal(
-    filterImportRows(rows, { enabled: false, filters: [{ column: "Diagnosis", keywords: ["trauma"] }] }).length,
+    filterImportRows(rows, {
+      enabled: false,
+      filters: [{ column: "Diagnosis", keywords: ["trauma"] }],
+    }).length,
     rows.length,
   );
   assert.equal(
-    filterImportRows(rows, { enabled: true, filters: [{ column: "", keywords: ["trauma"] }] }).length,
+    filterImportRows(rows, { enabled: true, filters: [{ column: "", keywords: ["trauma"] }] })
+      .length,
     rows.length,
   );
   assert.equal(
-    filterImportRows(rows, { enabled: true, filters: [{ column: "Diagnosis", keywords: ["  ", ""] }] }).length,
+    filterImportRows(rows, {
+      enabled: true,
+      filters: [{ column: "Diagnosis", keywords: ["  ", ""] }],
+    }).length,
     rows.length,
   );
 });

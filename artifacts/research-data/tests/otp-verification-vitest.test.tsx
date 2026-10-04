@@ -19,21 +19,13 @@ describe("OtpVerification", () => {
   });
 
   it("respects a custom length prop", () => {
-    render(
-      <OtpVerification length={4} onVerify={() => true} onResend={() => {}} />,
-    );
+    render(<OtpVerification length={4} onVerify={() => true} onResend={() => {}} />);
     const boxes = screen.getAllByRole("textbox", { name: /Digit \d+ of 4/ });
     expect(boxes).toHaveLength(4);
   });
 
   it("shows the masked destination when toLabel is provided", () => {
-    render(
-      <OtpVerification
-        toLabel="a***@e***"
-        onVerify={() => true}
-        onResend={() => {}}
-      />,
-    );
+    render(<OtpVerification toLabel="a***@e***" onVerify={() => true} onResend={() => {}} />);
     expect(screen.getByText(/a\*\*\*@e\*\*\*/)).toBeInTheDocument();
   });
 
@@ -57,9 +49,7 @@ describe("OtpVerification", () => {
     for (const [i, ch] of [..."987654"].entries()) {
       await userEvent.type(boxes[i], ch);
     }
-    await waitFor(() =>
-      expect(screen.getByText("Verified!")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("Verified!")).toBeInTheDocument());
   });
 
   it("shows the error message and resets boxes on a failed verify", async () => {
@@ -69,11 +59,7 @@ describe("OtpVerification", () => {
     for (const [i, ch] of [..."000000"].entries()) {
       await userEvent.type(boxes[i], ch);
     }
-    await waitFor(() =>
-      expect(
-        screen.getByRole("alert").textContent,
-      ).toMatch(/Incorrect code/),
-    );
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toMatch(/Incorrect code/));
     // After a failure, the component clears the boxes.
     const after = screen.getAllByRole("textbox", { name: /Digit \d+ of 6/ });
     for (const b of after) {
@@ -90,9 +76,9 @@ describe("OtpVerification", () => {
     // The button label switches to a countdown; we don't assert the
     // exact text because the cooldown ticks via setTimeout.
     await waitFor(() =>
-      expect(
-        (screen.getByRole("button", { name: /Resend in/ }).textContent ?? ""),
-      ).toMatch(/Resend in 0:/),
+      expect(screen.getByRole("button", { name: /Resend in/ }).textContent ?? "").toMatch(
+        /Resend in 0:/,
+      ),
     );
   });
 
@@ -103,10 +89,7 @@ describe("OtpVerification", () => {
     // Fire a single change event with mixed input. The component's
     // handleChange keeps only the last digit.
     act(() => {
-      const native = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype,
-        "value",
-      );
+      const native = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
       native?.set?.call(box0, "a7");
       box0.dispatchEvent(new Event("input", { bubbles: true }));
     });

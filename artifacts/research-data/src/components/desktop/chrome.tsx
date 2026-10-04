@@ -1,9 +1,30 @@
 import { cn } from "@/lib/utils";
 
+/**
+ * macOS traffic-light colours.
+ *
+ * These were hardcoded hex values (`#28C840/#FEBC2E/#FF5F57`) with no token
+ * behind them, so they could not follow the active theme preset or a
+ * high-contrast / dark-mode preference. They now resolve from CSS custom
+ * properties with the previous values as the fallback.
+ *
+ * TOKEN AGENT (`src/index.css`): declare these on `:root` (and a
+ * `prefers-contrast: more` / forced-colors override if you want):
+ *
+ *   --tl-close: #ff5f57;
+ *   --tl-minimize: #febc2e;
+ *   --tl-maximize: #28c840;
+ *
+ * NOTE: `Window.tsx` no longer renders `TrafficLights` — the desktop title bar
+ * keeps only the GNOME/Adwaita glyph buttons, so the macOS dots no longer break
+ * the stated Ubuntu fidelity (and no longer duplicate three actions behind a
+ * second set of sub-24px hit targets). This component is retained because other
+ * code still imports it; it is now only a decorative/optional affordance.
+ */
 const DOT_COLORS = {
-  green: "#28C840",
-  yellow: "#FEBC2E",
-  red: "#FF5F57",
+  green: "var(--tl-maximize, #28c840)",
+  yellow: "var(--tl-minimize, #febc2e)",
+  red: "var(--tl-close, #ff5f57)",
 } as const;
 
 type TrafficLightsProps = {
@@ -16,9 +37,11 @@ type TrafficLightsProps = {
 };
 
 /**
- * macOS-style traffic-light dots for the window/panel titlebar.
+ * macOS-style traffic-light dots for a panel titlebar.
  * Decorative when no handlers are supplied; becomes interactive (and focusable)
  * only for the actions that actually exist in the host component.
+ *
+ * Not used by the desktop window manager — see the note above.
  */
 export function TrafficLights({
   onClose,

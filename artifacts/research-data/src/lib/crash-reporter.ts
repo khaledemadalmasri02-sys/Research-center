@@ -131,7 +131,7 @@ export function installGlobalHandlers(): void {
       kind: "windowerror",
       message: e.message || "(no message)",
       stack: e.error instanceof Error ? e.error.stack : undefined,
-      url: window.location.href,
+      url: window.location.pathname,
       userAgent: navigator.userAgent,
       ts: new Date().toISOString(),
     });
@@ -148,7 +148,7 @@ export function installGlobalHandlers(): void {
             ? err
             : "(non-error rejection)",
       stack: err instanceof Error ? err.stack : undefined,
-      url: window.location.href,
+      url: window.location.pathname,
       userAgent: navigator.userAgent,
       ts: new Date().toISOString(),
     });

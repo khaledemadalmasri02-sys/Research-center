@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f172a" />
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1RCNKNZBYK"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-1RCNKNZBYK');
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Research Center — Patient Research Data Collection</title>
     <meta name="description" content="Research Center for patient research: secure radiology patient data collection, medical image storage, and AI prediction tracking." />
@@ -15,10 +24,96 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Research Center — Patient Research Data Collection" />
     <meta name="twitter:description" content="Research Center for patient research: secure radiology patient data collection, medical image storage, and AI prediction tracking." />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/jpeg" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/jpeg" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!--
+      Arabic webfont. src/index.css names 'Noto Sans Arabic' / 'IBM Plex Sans
+      Arabic' in --app-font-sans but shipped no @font-face for them, so Arabic
+      text silently fell back to whatever the OS happened to pick. Arabic is a
+      first-class locale here (full `ar` bundle) so load a real face. Keep this
+      <link> in sync with the --app-font-sans / --app-font-serif stacks.
+    -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!--
+      Pre-hydration theme + density + RTL bootstrap. Runs before React mounts
+      to avoid a flash of wrong theme / layout direction. Mirrors the keys
+      used by next-themes (class on <html>), the theme preset persisted by the
+      desktop shell, and the density persisted by src/hooks/use-density.ts.
+    -->
+    <script>
+      (function () {
+        try {
+          // ---- theme ------------------------------------------------------
+          // Two sources can decide dark mode:
+          //   1. "desktop-theme" — the desktop shell's theme preset, written by
+          //      ThemePresetProvider. It calls setTheme(preset.dark) inside a
+          //      React effect, i.e. AFTER first paint, which produced a white
+          //      flash on every desktop load. Resolve it here instead.
+          //      Shape (src/components/desktop/theme-preset-context.tsx):
+          //        JSON.stringify({ id })            for a built-in preset
+          //        JSON.stringify({ custom: {...} }) for a user-defined one
+          //   2. "theme" — next-themes' own key, used by the classic shell.
+          // Only apply (1) when a preset is actually persisted: with no stored
+          // preset the classic shell must keep following its own theme choice
+          // instead of being forced to the default preset's mode.
+          //
+          // LIGHT_PRESET_IDS mirrors the `dark: false` entries in
+          // src/lib/theme-presets.ts. KEEP IN SYNC when adding a light preset.
+          // An unknown id falls through to dark, which matches
+          // getThemePreset()'s fallback to the first (dark) preset.
+          var LIGHT_PRESET_IDS = { solarized: 1 };
+          var presetDark = null;
+          var raw = localStorage.getItem("desktop-theme");
+          if (raw) {
+            var p = JSON.parse(raw);
+            if (p && typeof p === "object") {
+              if (p.custom) presetDark = p.custom.dark === true;
+              else if (typeof p.id === "string")
+                presetDark = LIGHT_PRESET_IDS[p.id] !== 1;
+            }
+          }
+
+          var dark;
+          if (presetDark !== null) {
+            dark = presetDark;
+          } else {
+            // "system" (or an unset key) must resolve through the media query,
+            // otherwise a system-dark user with the default theme gets light.
+            var stored = localStorage.getItem("theme");
+            var systemDark =
+              !!(window.matchMedia &&
+                window.matchMedia("(prefers-color-scheme: dark)").matches);
+            dark = stored === "dark" || (stored !== "light" && systemDark);
+          }
+          if (dark) document.documentElement.classList.add("dark");
+          else document.documentElement.classList.remove("dark");
+
+          // ---- density ---------------------------------------------------
+          // Canonical key is "app-table-density" (docs/design-tokens.md §4,
+          // written by useDensity()); "app-density" is the pre-unification key.
+          var density =
+            localStorage.getItem("app-table-density") ||
+            localStorage.getItem("app-density") ||
+            "comfortable";
+          document.documentElement.setAttribute("data-density", density);
+
+          // ---- direction -------------------------------------------------
+          var lang = localStorage.getItem("i18nextLng") || navigator.language || "en";
+          var rtl = lang === "ar" || lang === "he" || lang === "fa" || lang === "ur";
+          document.documentElement.setAttribute("dir", rtl ? "rtl" : "ltr");
+          document.documentElement.setAttribute("lang", lang);
+        } catch (_) {
+          /* localStorage may be unavailable (private mode, SSR); ignore. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -112,12 +112,12 @@ export function TourSettings() {
     <Card>
       <CardHeader>
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <Film className="h-4 w-4" /> Product Tour Videos
+          <Film className="h-4 w-4" aria-hidden /> {t("tourSettings.title")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
         <div className="flex items-center gap-3">
-          <span className="text-sm font-medium">Default video source:</span>
+          <span className="text-sm font-medium">{t("tourSettings.defaultSource")}</span>
           <Select value={draft.defaultSource} onValueChange={(v) => setGlobal(v as TourSource)}>
             <SelectTrigger className="w-52">
               <SelectValue />
@@ -125,22 +125,19 @@ export function TourSettings() {
             <SelectContent>
               <SelectItem value="animated">
                 <span className="flex items-center gap-2">
-                  <Sparkles className="h-4 w-4" /> Animated explainer
+                  <Sparkles className="h-4 w-4" aria-hidden /> {t("tourSettings.sourceAnimated")}
                 </span>
               </SelectItem>
               <SelectItem value="screen">
                 <span className="flex items-center gap-2">
-                  <Film className="h-4 w-4" /> Screen recording
+                  <Film className="h-4 w-4" aria-hidden /> {t("tourSettings.sourceScreen")}
                 </span>
               </SelectItem>
             </SelectContent>
           </Select>
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Choose whether the tour plays the generated animated explainer or a real screen recording for each step.
-          Upload a screen recording per step below, then set its source to 'Screen recording'.
-        </p>
+        <p className="text-xs text-muted-foreground">{t("tourSettings.explainer")}</p>
 
         <div className="border rounded-md divide-y">
           {TOUR_STEPS.map((s) => {
@@ -157,9 +154,11 @@ export function TourSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="default">Use global ({draft.defaultSource})</SelectItem>
-                    <SelectItem value="animated">Animated explainer</SelectItem>
-                    <SelectItem value="screen">Screen recording</SelectItem>
+                    <SelectItem value="default">
+                      {t("tourSettings.useGlobal", { source: draft.defaultSource })}
+                    </SelectItem>
+                    <SelectItem value="animated">{t("tourSettings.sourceAnimated")}</SelectItem>
+                    <SelectItem value="screen">{t("tourSettings.sourceScreen")}</SelectItem>
                   </SelectContent>
                 </Select>
 
@@ -167,7 +166,7 @@ export function TourSettings() {
                   <div className="flex items-center gap-3 flex-1">
                     <label className="inline-flex items-center gap-2 cursor-pointer text-xs border rounded-md px-2 py-1 hover:bg-secondary">
                       <Upload className="h-4 w-4" />
-                      {uploading === key ? "Uploading…" : "Upload screen video"}
+                      {uploading === key ? t("tourSettings.uploading") : t("tourSettings.uploadScreen")}
                       <input
                         type="file"
                         accept="video/*"
@@ -181,10 +180,10 @@ export function TourSettings() {
                     </label>
                     {screenUrl ? (
                       <span className="flex items-center gap-1 text-xs text-green-600">
-                        <Check className="h-3.5 w-3.5" /> uploaded
+                        <Check className="h-3.5 w-3.5" aria-hidden /> {t("tourSettings.uploaded")}
                       </span>
                     ) : (
-                      <span className="text-xs text-muted-foreground">no clip yet (uses placeholder)</span>
+                      <span className="text-xs text-muted-foreground">{t("tourSettings.noClip")}</span>
                     )}
                     {screenUrl && (
                       <video src={screenUrl} controls className="h-10 rounded border" />

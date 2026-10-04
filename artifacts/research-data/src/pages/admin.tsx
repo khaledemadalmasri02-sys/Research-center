@@ -9,8 +9,21 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useAuth } from "@/hooks/use-auth";
 import { useLocation } from "wouter";
 import { TourSettings } from "@/components/tour-settings";
-import { Loader2, Check, X, ShieldAlert, MessageSquare, Star, BarChart3, DatabaseBackup } from "lucide-react";
+import {
+  Loader2,
+  Check,
+  X,
+  ShieldAlert,
+  MessageSquare,
+  Star,
+  BarChart3,
+  DatabaseBackup,
+  Trash2,
+} from "lucide-react";
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { NoPermissionState } from "@/components/ui/states";
+import { DestructiveActionButton } from "@/components/confirm-destructive";
 
 interface SignupRequest {
   id: number;
@@ -96,6 +109,7 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
 }
 
 export default function Admin() {
+  const { t } = useTranslation();
   const { isLoading, canAdminAccess } = useAuth();
   const [, navigate] = useLocation();
   const qc = useQueryClient();
@@ -195,36 +209,49 @@ export default function Admin() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
+      <Layout>
+        <div className="flex items-center justify-center py-24" role="status">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </Layout>
     );
   }
-  if (!canAdminAccess) return null;
+  if (!canAdminAccess) {
+    return (
+      <Layout>
+        <div className="mx-auto max-w-2xl">
+          <NoPermissionState
+            title={t("admin.noPermissionTitle")}
+            description={t("admin.noPermissionDesc")}
+          />
+        </div>
+      </Layout>
+    );
+  }
 
   return (
     <Layout>
       <div className="max-w-5xl mx-auto space-y-6">
         <div>
           <h1 className="text-3xl font-bold tracking-tight flex items-center gap-2">
-            <ShieldAlert className="h-7 w-7 text-primary" /> Admin Controller
+            <ShieldAlert className="h-7 w-7 text-primary" /> {t("admin.title")}
           </h1>
-          <p className="text-muted-foreground mt-1">Review sign-up requests and manage users.</p>
+          <p className="text-muted-foreground mt-1">{t("admin.subtitle")}</p>
         </div>
 
         <Tabs defaultValue="signups">
           <TabsList>
-            <TabsTrigger value="signups">Sign-up Requests</TabsTrigger>
-            <TabsTrigger value="users">Users</TabsTrigger>
-            <TabsTrigger value="feedback">Feedback</TabsTrigger>
-            <TabsTrigger value="system">System</TabsTrigger>
-            <TabsTrigger value="tour">Tour</TabsTrigger>
+            <TabsTrigger value="signups">{t("admin.signupsTab")}</TabsTrigger>
+            <TabsTrigger value="users">{t("admin.usersTab")}</TabsTrigger>
+            <TabsTrigger value="feedback">{t("admin.feedbackTab")}</TabsTrigger>
+            <TabsTrigger value="system">{t("admin.systemTab")}</TabsTrigger>
+            <TabsTrigger value="tour">{t("admin.tourTab")}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="signups">
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-semibold">Pending Applications</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("admin.pendingApplications")}</CardTitle>
               </CardHeader>
               <CardContent>
                 {signups.isLoading ? (
@@ -232,7 +259,7 @@ export default function Admin() {
                     <Loader2 className="h-6 w-6 animate-spin text-primary" />
                   </div>
                 ) : signups.data?.requests.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-6 text-center">No sign-up requests.</p>
+                  <p className="text-sm text-muted-foreground py-6 text-center">{t("admin.noSignups")}</p>
                 ) : (
                   <div className="overflow-x-auto">
                     <Table>
@@ -243,7 +270,7 @@ export default function Admin() {
                           <TableHead>Email</TableHead>
                           <TableHead>Reason</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableHead className="text-end">{t("admin.actions")}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -256,7 +283,7 @@ export default function Admin() {
                             <TableCell>
                               <Badge variant={statusVariant(r.status)}>{r.status}</Badge>
                             </TableCell>
-                            <TableCell className="text-right space-x-2">
+                            <TableCell className="text-end space-x-2">
                               {r.status === "pending" && (
                                 <>
                                   <Button
@@ -288,7 +315,7 @@ export default function Admin() {
           <TabsContent value="feedback">
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-semibold">User Feedback</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("admin.userFeedback")}</CardTitle>
               </CardHeader>
               <CardContent>
                 {feedback.isLoading ? (
@@ -296,7 +323,7 @@ export default function Admin() {
                     <Loader2 className="h-6 w-6 animate-spin text-primary" />
                   </div>
                 ) : feedback.data?.feedback.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-6 text-center">No feedback submitted yet.</p>
+                  <p className="text-sm text-muted-foreground py-6 text-center">{t("admin.noFeedback")}</p>
                 ) : (
                   <div className="overflow-x-auto">
                     <Table>
@@ -308,7 +335,7 @@ export default function Admin() {
                           <TableHead>Message</TableHead>
                           <TableHead>Status</TableHead>
                           <TableHead>Date</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableHead className="text-end">{t("admin.actions")}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -335,7 +362,7 @@ export default function Admin() {
                             <TableCell className="text-muted-foreground text-xs">
                               {new Date(f.createdAt).toLocaleString()}
                             </TableCell>
-                            <TableCell className="text-right">
+                            <TableCell className="text-end">
                               {f.status === "new" ? (
                                 <Button
                                   size="sm"
@@ -361,7 +388,7 @@ export default function Admin() {
           <TabsContent value="users">
             <Card>
               <CardHeader>
-                <CardTitle className="text-sm font-semibold">All Users</CardTitle>
+                <CardTitle className="text-sm font-semibold">{t("admin.allUsers")}</CardTitle>
               </CardHeader>
               <CardContent>
                 {users.isLoading ? (
@@ -377,7 +404,7 @@ export default function Admin() {
                           <TableHead>Role</TableHead>
                           <TableHead>Admin</TableHead>
                           <TableHead>Status</TableHead>
-                          <TableHead className="text-right">Actions</TableHead>
+                          <TableHead className="text-end">{t("admin.actions")}</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -403,14 +430,14 @@ export default function Admin() {
                             <TableCell>
                               <Badge variant={statusVariant(u.status)}>{u.status}</Badge>
                             </TableCell>
-                            <TableCell className="text-right space-x-2">
+                            <TableCell className="text-end space-x-2">
                               {u.status === "active" ? (
                                 <Button
                                   size="sm"
                                   variant="outline"
                                   onClick={() => userMutation.mutate({ id: u.id, op: "patch", body: { status: "suspended" } })}
                                 >
-                                  Suspend
+                                  {t("admin.suspend")}
                                 </Button>
                               ) : (
                                 <Button
@@ -418,20 +445,21 @@ export default function Admin() {
                                   variant="outline"
                                   onClick={() => userMutation.mutate({ id: u.id, op: "patch", body: { status: "active" } })}
                                 >
-                                  Activate
+                                  {t("admin.activate")}
                                 </Button>
                               )}
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => {
-                                  if (confirm(`Delete user ${u.username}?`)) {
-                                    userMutation.mutate({ id: u.id, op: "delete" });
-                                  }
+                              <DestructiveActionButton
+                                trigger={<Trash2 className="h-4 w-4" />}
+                                triggerLabel={t("admin.deleteUserLabel", { username: u.username })}
+                                triggerClassName=""
+                                title={t("admin.deleteUserTitle")}
+                                description={t("admin.deleteUserBody")}
+                                subject={u.username}
+                                requireText={u.username}
+                                onSelect={async () => {
+                                  await userMutation.mutateAsync({ id: u.id, op: "delete" });
                                 }}
-                              >
-                                Delete
-                              </Button>
+                              />
                             </TableCell>
                           </TableRow>
                         ))}

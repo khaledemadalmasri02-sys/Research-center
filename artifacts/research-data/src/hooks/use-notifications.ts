@@ -21,11 +21,23 @@ async function fetchNotifications(): Promise<NotificationsResponse> {
   return res.json();
 }
 
+const POLL_ACTIVE_MS = 30_000;
+/** While the tab is hidden there is nobody to notify; drop to once a minute. */
+const POLL_HIDDEN_MS = 60_000;
+
 export function useNotifications() {
   return useQuery({
     queryKey: ["notifications"],
     queryFn: fetchNotifications,
-    refetchInterval: 30_000,
+    // Refetch when the user comes back to a stale tab: the global default is
+    // `refetchOnWindowFocus: false`, which left the bell showing a count from
+    // whenever the tab was last visible.
+    refetchOnWindowFocus: true,
+    refetchInterval: (query) =>
+      typeof document !== "undefined" && document.hidden
+        ? POLL_HIDDEN_MS
+        : POLL_ACTIVE_MS,
+    refetchIntervalInBackground: false,
   });
 }
 
@@ -45,7 +57,7 @@ export function useMarkAllNotificationsRead() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/notifications/read-all`, { method: "POST", credentials: "include" });
+      const res = await fetch("/api/notifications/read-all", { method: "POST", credentials: "include" });
       if (!res.ok) throw new Error("Failed");
       return res.json();
     },
