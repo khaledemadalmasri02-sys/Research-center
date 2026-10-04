@@ -7,7 +7,7 @@
     "codegen:check": "pnpm exec tsx scripts/check-codegen.ts"
   },
   "devDependencies": {
-    "orval": "^8.21.0",
+    "orval": "^8.39.0",
     "tsx": "catalog:"
   }
 }
