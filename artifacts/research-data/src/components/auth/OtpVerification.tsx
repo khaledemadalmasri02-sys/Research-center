@@ -1,11 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion, type HTMLMotionProps } from "framer-motion";
+import { AnimatePresence, motion, type HTMLMotionProps } from "framer-motion";
 import { CheckCircle2, Loader2, Lock, Mail, ShieldCheck } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useSound } from "@/components/sound-provider";
+import {
+  DURATION,
+  EASE_OUT,
+  SPRING,
+  shouldReduceMotion,
+  staggerStartDelay,
+  useMotionPrefs,
+} from "@/lib/motion";
+import { authErrorFromThrown, formatCountdown } from "@/lib/auth-errors";
+import { useAuthTranslate } from "@/components/auth/use-translate";
+
+/**
+ * Decorative LOOP periods, in seconds.
+ *
+ * Deliberately not `DURATION` values: those are transition durations, and a
+ * gradient ring that spins for 280ms would strobe. These are ambient, carry no
+ * information, and are removed entirely under reduced motion / reduced data.
+ */
+const RING_PERIOD_S = 12;
+const ENVELOPE_FLOAT_S = 5;
+const SHIELD_FLOAT_S = 4;
+const ATTENTION_PULSE_S = 2;
 
 export interface OtpVerificationProps {
-  /** Number of digits. Defaults to 4 per the reference; project uses 6. */
+  /** Number of digits. Defaults to 6 to match the backend OTP_LENGTH. */
   length?: number;
   /** Resolves true if the code is correct, false otherwise. */
   onVerify: (code: string) => Promise<boolean> | boolean;
@@ -28,7 +51,7 @@ function buildBoxes(len: number) {
 }
 
 export function OtpVerification({
-  length = 4,
+  length = 6,
   onVerify,
   onResend,
   resendCooldownSeconds = 30,
@@ -36,7 +59,9 @@ export function OtpVerification({
   title = "Enter verification code",
   subtitle,
 }: OtpVerificationProps) {
-  const reduceMotion = useReducedMotion();
+  const { t } = useAuthTranslate();
+  const reduced = shouldReduceMotion(useMotionPrefs());
+  const { play } = useSound();
 
   const [digits, setDigits] = useState<string[]>(() => buildBoxes(length));
   const [status, setStatus] = useState<Status>("idle");
@@ -75,18 +100,22 @@ export function OtpVerification({
           setStatus("success");
         } else {
           setStatus("error");
-          setError("Incorrect code. Try again.");
+          setError(
+            t("auth.otpIncorrectCode", "Incorrect code. Try again."),
+          );
           setDigits(buildBoxes(length));
           inputsRef.current[0]?.focus();
         }
       } catch (err) {
         setStatus("error");
-        setError((err as Error)?.message ?? "Verification failed");
+        // Coded + translated: the resend/verify failure used to surface the
+        // backend's English string verbatim, in whatever locale the user was in.
+        setError(authErrorFromThrown(err, t).message);
         setDigits(buildBoxes(length));
         inputsRef.current[0]?.focus();
       }
     },
-    [length],
+    [length, t],
   );
 
   /* Auto-verify once the last digit is entered. */
@@ -121,10 +150,13 @@ export function OtpVerification({
 
   const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Backspace") {
+      // Always suppress the default. Without this, deleting an empty box also
+      // lets the browser move focus backwards *and* the handler moves it
+      // forwards, so the caret visibly jumps two boxes left.
+      e.preventDefault();
       if (digits[index]) {
         setDigitAt(index, "");
       } else if (index > 0) {
-        e.preventDefault();
         setDigitAt(index - 1, "");
         inputsRef.current[index - 1]?.focus();
       }
@@ -137,6 +169,20 @@ export function OtpVerification({
     }
   };
 
+  /**
+   * Paste the whole code at once.
+   *
+   * The reason this is worth handling properly: a one-time code is almost
+   * always pasted from an email or copied off a screen, and these boxes have
+   * `maxLength={1}`. Without an explicit handler the browser either drops
+   * everything after the first character or scatters the digits, and the user
+   * has to retype six digits one box at a time.
+   *
+   * Behaviour: non-digits stripped, truncated to `length`, distributed from
+   * the FIRST box (a pasted code is a complete code, not a fragment), the
+   * remaining boxes cleared, and focus parked on the last filled box so the
+   * next keystroke continues from there rather than jumping to box 1.
+   */
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
     e.preventDefault();
     const text = e.clipboardData.getData("text").replace(/\D/g, "").slice(0, length);
@@ -161,43 +207,63 @@ export function OtpVerification({
       setError(null);
       setDigits(buildBoxes(length));
       inputsRef.current[0]?.focus();
+      play("otp-sent");
     } catch (err) {
-      setError((err as Error)?.message ?? "Could not resend code");
+      setError(authErrorFromThrown(err, t).message);
+      play("error");
     }
   };
 
   const isBusy = status === "verifying";
 
   /* ---- Animations ---- */
-  const pulse = reduceMotion
-    ? {}
-    : { scale: [1, 1.05, 1] };
-  const pulseTransition = reduceMotion
-    ? undefined
-    : { repeat: Infinity, duration: 2, ease: "easeInOut" } as const;
 
+  /**
+   * The failure shake.
+   *
+   * Transform only, and ONLY ever for a rejection. This is the one place in
+   * the auth surface where motion is allowed to be loud, precisely because a
+   * rejected code has to fail unmistakably — nothing here may ever read as
+   * success for a failure, so it is a short horizontal shake and never a
+   * colour-to-green or a scale-up.
+   */
+  const shake =
+    status === "error" && !reduced
+      ? { x: [0, -8, 8, -8, 8, 0] as number[], transition: { duration: DURATION.slow } }
+      : {};
+
+  const pulse = reduced ? {} : { scale: [1, 1.05, 1] };
+  const pulseTransition = reduced
+    ? undefined
+    : ({ repeat: Infinity, duration: ATTENTION_PULSE_S, ease: "easeInOut" } as const);
+
+  /** Per-box entrance: the delay is clamped by the shared stagger budget. */
   const boxEntrance = (i: number): HTMLMotionProps<"input"> =>
-    reduceMotion
-      ? { initial: { opacity: 0 }, animate: { opacity: 1 }, transition: { delay: i * 0.03 } }
+    reduced
+      ? { initial: false }
       : {
           initial: { opacity: 0, y: 10 },
           animate: { opacity: 1, y: 0 },
-          transition: { delay: i * 0.06, duration: 0.3, ease: "easeOut" },
+          transition: {
+            delay: staggerStartDelay(i),
+            duration: DURATION.base,
+            ease: EASE_OUT,
+          },
         };
 
   return (
-    <div className="relative w-full max-w-sm">
+    <div className="relative w-full max-w-sm sm:max-w-xs md:max-w-sm">
       {/* Rotating rainbow-glow frame ring (decorative) */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -inset-[2px] rounded-[1.75rem] p-px"
         style={{
-          background: reduceMotion
+          background: reduced
             ? "conic-gradient(from 0deg, #f59e0b, #ec4899, #22d3ee, #f59e0b)"
             : undefined,
         }}
       >
-        {!reduceMotion && (
+        {!reduced && (
           <motion.div
             className="h-full w-full rounded-[1.75rem]"
             style={{
@@ -205,7 +271,7 @@ export function OtpVerification({
                 "conic-gradient(from 0deg, #f59e0b, #ec4899, #22d3ee, #f59e0b)",
             }}
             animate={{ rotate: 360 }}
-            transition={{ repeat: Infinity, duration: 12, ease: "linear" }}
+            transition={{ repeat: Infinity, duration: RING_PERIOD_S, ease: "linear" }}
           />
         )}
       </div>
@@ -215,8 +281,12 @@ export function OtpVerification({
         <motion.div
           aria-hidden="true"
           className="absolute -left-3 top-10 text-cyan-300/70"
-          animate={reduceMotion ? undefined : { y: [0, -6, 0], rotate: [0, 6, 0] }}
-          transition={{ repeat: Infinity, duration: 5, ease: "easeInOut" }}
+          animate={reduced ? undefined : { y: [0, -6, 0], rotate: [0, 6, 0] }}
+          transition={{
+            repeat: Infinity,
+            duration: ENVELOPE_FLOAT_S,
+            ease: "easeInOut",
+          }}
         >
           <Mail className="h-6 w-6" />
         </motion.div>
@@ -224,8 +294,8 @@ export function OtpVerification({
         <motion.div
           aria-hidden="true"
           className="absolute -right-2 top-6 text-emerald-300/80"
-          animate={reduceMotion ? undefined : { y: [0, -5, 0] }}
-          transition={{ repeat: Infinity, duration: 4, ease: "easeInOut" }}
+          animate={reduced ? undefined : { y: [0, -5, 0] }}
+          transition={{ repeat: Infinity, duration: SHIELD_FLOAT_S, ease: "easeInOut" }}
         >
           <ShieldCheck className="h-6 w-6" />
         </motion.div>
@@ -245,16 +315,32 @@ export function OtpVerification({
                 ? "bg-emerald-500/15 text-emerald-300 shadow-[0_0_25px_rgba(16,185,129,0.5)]"
                 : "bg-amber-500/15 text-amber-300 shadow-[0_0_20px_rgba(245,158,11,0.45)]",
             )}
-            animate={status === "success" && !reduceMotion ? { rotate: [0, -12, 0], scale: [1, 1.08, 1] } : undefined}
-            transition={{ duration: 0.5, ease: "easeOut" }}
+            animate={
+              status === "success" && !reduced
+                ? { rotate: [0, -12, 0], scale: [1, 1.08, 1] }
+                : undefined
+            }
+            transition={
+              status === "success" && !reduced ? SPRING.snappy : { duration: 0 }
+            }
           >
             <AnimatePresence mode="wait" initial={false}>
               {status === "success" ? (
-                <motion.div key="check" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+                <motion.div
+                  key="check"
+                  initial={reduced ? false : { scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={reduced ? { duration: 0 } : SPRING.snappy}
+                >
                   <CheckCircle2 className="h-7 w-7" aria-hidden="true" />
                 </motion.div>
               ) : (
-                <motion.div key="lock" initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}>
+                <motion.div
+                  key="lock"
+                  initial={reduced ? false : { scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={reduced ? { duration: 0 } : SPRING.snappy}
+                >
                   <Lock className="h-7 w-7" aria-hidden="true" />
                 </motion.div>
               )}
@@ -263,31 +349,38 @@ export function OtpVerification({
         </div>
 
         <h2 className="text-xl font-semibold tracking-tight text-white">
-          {status === "success" ? "Verified!" : status === "verifying" ? "Verifying code…" : title}
-        </h2>
-        <p className="mx-auto mt-1.5 max-w-xs text-sm text-white/50">
           {status === "success"
-            ? "Your email is confirmed. An admin will review your request."
-            : subtitle ??
-              (toLabel
-                ? `We sent a ${length}-digit code to ${toLabel}. It auto-verifies once entered.`
-                : `We sent a ${length}-digit code. It auto-verifies once entered.`)}
+            ? t("auth.otpVerified", "Verified!")
+            : status === "verifying"
+              ? t("auth.otpVerifying", "Verifying code…")
+              : title}
+        </h2>
+        <p className="mx-auto mt-1.5 max-w-sm text-center text-sm text-white/50">
+          {status === "success"
+            ? t(
+                "auth.otpVerifiedBody",
+                "Your email is confirmed. An admin will review your request.",
+              )
+            : (subtitle ??
+              t(
+                "auth.otpSentTo",
+                "We sent a {{length}}-digit code to {{to}}. It auto-verifies once entered.",
+                { length: String(length), to: toLabel },
+              ))}
         </p>
 
         {/* OTP boxes */}
         <div
-          className={cn("mt-6 flex justify-center gap-3", status === "error" && !reduceMotion && "animate-none")}
+          className={cn("mt-6 flex justify-center gap-2 sm:gap-3", status === "error" && !reduced && "animate-none")}
           role="group"
-          aria-label={`${length}-digit verification code`}
+          aria-label={t("auth.otpGroupLabel", "{{length}}-digit verification code", {
+            length: String(length),
+          })}
         >
           <AnimatePresence>
             {digits.map((digit, i) => {
               const focused = document.activeElement === inputsRef.current[i];
               const filled = digit !== "";
-              const shake =
-                status === "error" && !reduceMotion
-                  ? { x: [0, -8, 8, -8, 8, 0] }
-                  : undefined;
               return (
                 <motion.input
                   key={i}
@@ -296,19 +389,22 @@ export function OtpVerification({
                   }}
                   type="text"
                   inputMode="numeric"
+                  // Only the first box carries the one-time-code hint; that is
+                  // what lets a platform autofill the whole code into it.
                   autoComplete={i === 0 ? "one-time-code" : "off"}
                   maxLength={1}
+                  pattern="[0-9]*"
                   disabled={isBusy || status === "success"}
                   value={digit}
-                  aria-label={`Digit ${i + 1} of ${length} verification code`}
+                  aria-label={t("auth.otpDigitLabel", "Digit {{index}} of {{length}} verification code", {
+                    index: String(i + 1),
+                    length: String(length),
+                  })}
                   onChange={(e) => handleChange(i, e.target.value)}
                   onKeyDown={(e) => handleKeyDown(i, e)}
                   onPaste={handlePaste}
-                  onFocus={() => {
-                    setDigits((d) => (d[i] ? d : d));
-                  }}
                   className={cn(
-                    "h-14 w-12 rounded-xl border bg-[#16161c] text-center text-2xl font-bold text-white caret-emerald-400 outline-none transition-all",
+                    "h-12 w-10 sm:h-14 sm:w-12 flex-1 max-w-[3.25rem] rounded-xl border bg-[#16161c] text-center text-xl sm:text-2xl font-bold text-white caret-emerald-400 outline-none transition-all",
                     status === "error"
                       ? "border-rose-500/80 shadow-[0_0_15px_rgba(244,63,94,0.5)]"
                       : status === "success"
@@ -320,13 +416,7 @@ export function OtpVerification({
                             : "border-white/15",
                   )}
                   {...boxEntrance(i)}
-                  {...(shake
-                    ? {
-                        animate: { ...shake },
-                        transition: { duration: 0.4 },
-                        onAnimationComplete: () => {},
-                      }
-                    : {})}
+                  {...shake}
                 />
               );
             })}
@@ -337,32 +427,33 @@ export function OtpVerification({
         <AnimatePresence>
           {isBusy && (
             <motion.div
-              initial={{ opacity: 0, y: 6 }}
+              initial={reduced ? false : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
+              exit={reduced ? { opacity: 0 } : { opacity: 0, y: -6 }}
+              transition={{ duration: reduced ? 0 : DURATION.fast, ease: EASE_OUT }}
               className="mx-auto mt-5 inline-flex items-center gap-2 rounded-full bg-amber-500/15 px-4 py-1.5 text-sm font-medium text-amber-200"
             >
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              Verifying…
+              {t("auth.otpVerifyingShort", "Verifying…")}
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Error / resend-confirmation text */}
+        {/* Error / resend-confirmation text. Reserved height so a rejected
+            code does not shove the resend control down the card. */}
         <div className="mt-4 min-h-[1.25rem]" aria-live="assertive">
-          {error && (
+          {error ? (
             <p className="text-sm text-rose-300" role="alert">
               {error}
             </p>
-          )}
-          {!error && resent && (
-            <p className="text-sm text-emerald-300">A new code has been sent.</p>
-          )}
+          ) : !error && resent ? (
+            <p className="text-sm text-emerald-300">{t("auth.otpResent", "We sent a new code.")}</p>
+          ) : null}
         </div>
 
         {/* Resend */}
         <div className="mt-2 text-sm text-white/50">
-          Didn&apos;t receive the code?{" "}
+          {t("auth.otpNoCode", "Didn't receive the code?")}{" "}
           <button
             type="button"
             onClick={handleResend}
@@ -374,7 +465,11 @@ export function OtpVerification({
                 : "text-emerald-300 hover:text-emerald-200",
             )}
           >
-            {cooldown > 0 ? `Resend in 0:${String(cooldown).padStart(2, "0")}` : "Resend"}
+            {cooldown > 0
+              ? t("auth.resendIn", "Resend in {{time}}", {
+                  time: formatCountdown(cooldown),
+                })
+              : t("auth.resend", "Resend")}
           </button>
         </div>
       </div>

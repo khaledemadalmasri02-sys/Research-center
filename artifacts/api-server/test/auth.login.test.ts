@@ -21,7 +21,10 @@ describe("auth.login (P0.3 — slice 1)", () => {
       .post("/api/auth/login")
       .send({ username: "alice" });
     expect(res.status).toBe(400);
-    expect(res.body).toEqual({ error: "Username and password are required." });
+    expect(res.body).toEqual({
+      error: "Username and password are required.",
+      code: "AUTH_FIELD_REQUIRED",
+    });
   });
 
   it("returns 401 for an unknown user with consistent timing", async () => {
@@ -29,7 +32,7 @@ describe("auth.login (P0.3 — slice 1)", () => {
       .post("/api/auth/login")
       .send({ username: "nobody", password: "whatever123" });
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: "Invalid credentials." });
+    expect(res.body).toEqual({ error: "Invalid credentials.", code: "AUTH_INVALID_CREDENTIALS" });
   });
 
   it("returns 401 for a wrong password", async () => {
@@ -37,7 +40,7 @@ describe("auth.login (P0.3 — slice 1)", () => {
       .post("/api/auth/login")
       .send({ username: "alice", password: "WrongPass123" });
     expect(res.status).toBe(401);
-    expect(res.body).toEqual({ error: "Invalid credentials." });
+    expect(res.body).toEqual({ error: "Invalid credentials.", code: "AUTH_INVALID_CREDENTIALS" });
   });
 
   it("increments failed_attempts on a wrong password", async () => {
