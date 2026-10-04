@@ -18,7 +18,12 @@ const Progress = React.forwardRef<
     {...props}
   >
     <ProgressPrimitive.Indicator
-      className="h-full w-full flex-1 bg-primary transition-all"
+      // `transition-all` -> `transition-transform`. The indicator's only animated
+      // property is the inline `transform: translateX(-N%)`; `transition-all`
+      // also made `width` animatable, which is a per-frame layout on a
+      // determinate progress bar that is updated many times a second.
+      // `dur-base` (280ms) so a fast stream of value updates reads as motion.
+      className="h-full w-full flex-1 bg-primary transition-transform dur-base ease-curve-out"
       style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
     />
   </ProgressPrimitive.Root>

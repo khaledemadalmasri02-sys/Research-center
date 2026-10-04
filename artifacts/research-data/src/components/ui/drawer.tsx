@@ -1,17 +1,41 @@
 import * as React from "react"
 import { Drawer as DrawerPrimitive } from "vaul"
 
+import { shouldReduceMotion, useMotionPrefs } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
+/**
+ * A Drawer, with the one piece of its motion brought under our own reduced-
+ * motion policy.
+ *
+ * WHY THERE ISN'T MORE HERE. Unlike the Radix primitives, vaul drives the
+ * drawer, the overlay and the drag gesture itself through framer-motion, so
+ * there is no `data-state` keyframe for us to configure — and no CSS override
+ * can reach a JS-integrated spring. Those parts are covered by layer 2 of the
+ * reduced-motion story (`MotionConfig reducedMotion="user"` in src/App.tsx
+ * suppresses framer's opacity/transform animations) and by the global CSS
+ * clamp. Adding a second, competing animation here would only fight vaul.
+ *
+ * WHAT THIS DOES FIX. `shouldScaleBackground` shrinks and offsets the *whole
+ * page* behind the drawer. That is not an overlay animation, it is a layout
+ * animation on the user's actual content — and it is the most violent motion
+ * in the app, because the thing that moves is the study the user was reading.
+ * Under reduced motion (or reduced data) it is forced off. The drawer still
+ * opens and closes; the page behind it simply stays put.
+ */
 const Drawer = ({
   shouldScaleBackground = true,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Root>) => (
-  <DrawerPrimitive.Root
-    shouldScaleBackground={shouldScaleBackground}
-    {...props}
-  />
-)
+}: React.ComponentProps<typeof DrawerPrimitive.Root>) => {
+  const reduceMotion = shouldReduceMotion(useMotionPrefs())
+
+  return (
+    <DrawerPrimitive.Root
+      shouldScaleBackground={shouldScaleBackground && !reduceMotion}
+      {...props}
+    />
+  )
+}
 Drawer.displayName = "Drawer"
 
 const DrawerTrigger = DrawerPrimitive.Trigger

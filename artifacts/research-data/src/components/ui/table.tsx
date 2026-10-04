@@ -57,8 +57,14 @@ const TableRow = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <tr
     ref={ref}
+    // HOVER ONLY, DELIBERATELY. A row that also animated on entrance would be
+    // wrong here: this component renders unknown-length bodies, and the
+    // patients table renders thousands of rows. Colour-only hover, on
+    // --dur-fast via `.row-transition` (src/index.css), and nothing that moves
+    // — a row that shifts under the pointer makes a long list much harder to
+    // scan down a single column.
     className={cn(
-      "border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted",
+      "border-b row-transition hover:bg-muted/50 data-[state=selected]:bg-muted",
       className
     )}
     {...props}

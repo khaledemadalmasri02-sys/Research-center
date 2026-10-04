@@ -1,12 +1,17 @@
 import * as React from "react"
+import { Loader2 } from "lucide-react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0" +
-" hover-elevate active-elevate-2",
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0" +
+  // `.pressable` (src/index.css) supplies the transition AND the ~2% press
+  // scale. It is a plain CSS class rather than more Tailwind utilities because
+  // it has to be expressible in one place for the `disabled` /
+  // `aria-disabled` exclusion and the reduced-motion override to line up.
+    " hover-elevate active-elevate-2 pressable",
   {
     variants: {
       variant: {
@@ -46,17 +51,78 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean
+  /**
+   * Show a spinner in place of the label, without changing the button's box.
+   *
+   * WHY NOT THE OBVIOUS `disabled` + swap-the-label. Two reasons, both of them
+   * usability bugs rather than style issues:
+   *
+   *  1. LAYOUT SHIFT. Swapping "Save report" for "Saving…" changes the intrinsic
+   *    width of the button, which moves every control to its right — often the
+   *    Cancel button, on the exact frame the user is most likely to be moving
+   *    toward it. On a submit that is a real mis-click. The label here keeps
+   *    its box and the spinner is absolutely positioned over it, so the
+   *    measured width of the button is identical in both states.
+   *  2. DOUBLE SUBMIT. The native `disabled` attribute is set, so Enter-to-
+   *    submit from a field in the same form cannot fire a second request
+   *    either — `aria-disabled` alone would not stop that. `aria-disabled` is
+   *    set as well so assistive tech reports the state rather than silently
+   *    swallowing the click. This matches LoadingButton, which also disables.
+   *
+   * The label is faded with `opacity-0` rather than hidden, because
+   * `visibility: hidden` would remove it from the accessibility tree and the
+   * button would announce itself as "Loading" instead of by its own name.
+   */
+  loading?: boolean
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  (
+    { className, variant, size, asChild = false, loading = false, disabled, onClick, children, ...props },
+    ref,
+  ) => {
     const Comp = asChild ? Slot : "button"
+    // `asChild` renders onto whatever the caller passed — usually an <a> via
+    // DesktopLink, where `disabled` is not a valid attribute and does nothing.
+    // For those, `aria-disabled` plus a dead click handler is the equivalent.
+    const inert = disabled || loading || undefined
+    const handleClick = loading
+      ? (event: React.MouseEvent<HTMLButtonElement>) => {
+          event.preventDefault()
+          event.stopPropagation()
+        }
+      : onClick
+
     return (
       <Comp
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
+        disabled={asChild ? disabled : inert}
+        aria-busy={loading || undefined}
+        aria-disabled={loading || undefined}
+        data-loading={loading ? "" : undefined}
+        onClick={handleClick}
         {...props}
-      />
+      >
+        <span className="relative inline-flex items-center justify-center gap-2">
+          <span
+            className={cn(
+              "inline-flex items-center justify-center gap-2",
+              loading && "opacity-0",
+            )}
+          >
+            {children}
+          </span>
+          {loading && (
+            <span
+              className="absolute inset-0 grid place-items-center"
+              aria-hidden="true"
+            >
+              <Loader2 className="size-4 animate-motion-spin" />
+            </span>
+          )}
+        </span>
+      </Comp>
     )
   }
 )

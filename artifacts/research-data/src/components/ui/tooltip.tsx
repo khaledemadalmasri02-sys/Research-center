@@ -20,7 +20,17 @@ const TooltipContent = React.forwardRef<
       ref={ref}
       sideOffset={sideOffset}
       className={cn(
-        "z-50 overflow-hidden rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-tooltip-content-transform-origin]",
+        // `anim-instant` (--dur-instant, 120ms). A tooltip must never make the user
+        // wait for information: the whole point is to confirm what a control
+        // does, and every millisecond of reveal delay is a millisecond the
+        // label is missing while the pointer is already moving away.
+        //
+        // The `animate-in fade-in-0 zoom-in-95` trio used to be unconditional,
+        // which meant the *enter* keyframe also ran on mount. It is now scoped
+        // to `data-[state=open]` so the animation belongs to the open
+        // transition and the closed state has a real exit, matching every other
+        // primitive here.
+        "z-50 overflow-hidden rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=open]:fade-in-0 data-[state=closed]:fade-out-0 data-[state=open]:zoom-in-95 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 origin-[--radix-tooltip-content-transform-origin] anim-instant anim-ease-out data-[state=closed]:anim-ease-emphasized",
         className
       )}
       {...props}

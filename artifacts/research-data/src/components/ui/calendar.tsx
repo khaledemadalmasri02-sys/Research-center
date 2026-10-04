@@ -84,7 +84,11 @@ function Calendar({
             : "[&>svg]:text-muted-foreground flex h-8 items-center gap-1 rounded-md pl-2 pr-1 text-sm [&>svg]:size-3.5",
           defaultClassNames.caption_label
         ),
-        table: "w-full border-collapse",
+        // NOTE: no `table` class key. This shadcn component was written against
+        // react-day-picker v8; v10's `UI` ClassNames enum has no `table`
+        // member (it uses `months` / `month` / `month_grid`), so passing it was
+        // a TS2353 error and was silently doing nothing at runtime. The v10
+        // class names below already carry the layout.
         weekdays: cn("flex", defaultClassNames.weekdays),
         weekday: cn(
           "text-muted-foreground flex-1 select-none rounded-md text-[0.8rem] font-normal",

@@ -22,6 +22,10 @@
   --color-primary: hsl(var(--primary));
   --color-primary-foreground: hsl(var(--primary-foreground));
   --color-primary-border: var(--primary-border);
+  /* --primary is a *surface* token: in dark mode it is a dark teal that must
+     carry white label text. It is therefore unusable as a text colour on the
+     dark background. --primary-text is the text-on-surface variant. */
+  --color-primary-text: hsl(var(--primary-text));
 
   --color-secondary: hsl(var(--secondary));
   --color-secondary-foreground: hsl(var(--secondary-foreground));
@@ -38,6 +42,7 @@
   --color-destructive: hsl(var(--destructive));
   --color-destructive-foreground: hsl(var(--destructive-foreground));
   --color-destructive-border: var(--destructive-border);
+  --color-destructive-text: hsl(var(--destructive-text));
 
   --color-chart-1: hsl(var(--chart-1));
   --color-chart-2: hsl(var(--chart-2));
@@ -67,9 +72,78 @@
 }
 
 /* LIGHT MODE */
+/* ==========================================================================
+   Registered custom properties.
+
+   An unregistered custom property is just a string, so the browser cannot
+   interpolate it: changing one produces an instant swap no matter what
+   `transition` says. `@property` promotes it to a typed, animatable value.
+
+   This matters for the desktop shell's theme presets. Switching preset rewrites
+   --background / --card / --accent-brand / --glass-bg etc.; without
+   registration the whole workspace re-skins in a single frame, which reads as a
+   flash rather than a transition. The shell currently works around this with an
+   injected `html.desktop-theme-skin` stylesheet that transitions the *computed*
+   colours instead — which works, but only for the properties it enumerates.
+
+   Support: Chrome/Edge 85+, Safari 16.4+, Firefox 128+. Where unsupported the
+   declaration is ignored and behaviour is exactly what it is today (an instant
+   swap), so this is additive and safe to ship.
+
+   `initial-value` MUST match the value in :root / .dark below, otherwise the
+   property resolves to the wrong colour on first paint — before any stylesheet
+   rule that sets it. Keep the two in sync when editing either side.
+
+   Deliberately NOT registered: --dur-* and --ease-* (they are read by
+   transition/animation properties, never transitioned themselves).
+   ========================================================================== */
+@property --glass-bg {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(255, 255, 255, 0.65);
+}
+@property --accent-brand {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: #a855f7;
+}
+@property --accent-soft {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(168, 85, 247, 0.18);
+}
+@property --accent-soft-strong {
+  syntax: "<color>";
+  inherits: true;
+  initial-value: rgba(168, 85, 247, 0.34);
+}
+
 :root {
+  /* U4: Without an explicit color-scheme the UA renders native widgets
+     (select popup, date picker, scrollbars, autofill) in its default LIGHT
+     appearance even while .dark is active. This is the single most visible
+     dark-mode defect and is fixed by these two declarations alone. */
+  color-scheme: light;
+
   --button-outline: rgba(0,0,0, .10);
   --badge-outline: rgba(0,0,0, .05);
+
+  /* Stacking scale for the desktop shell, mirroring
+     src/components/desktop/z-index.ts (which remains the authority and is what
+     the shell actually applies via inline styles — these exist so Radix portals
+     mounted on <body> and any third-party code can join the same ordering by
+     name instead of re-deriving it). Before this scale existed the shell
+     hardcoded z-20/z-30/z-40/z-50 while Radix used z-50/z-[100], so modals
+     covered the chrome only by luck. */
+  --z-wallpaper: 0;
+  --z-window: 10;
+  --z-dock: 20;
+  --z-topbar: 30;
+  --z-menu: 50;
+  --z-launcher: 60;
+  --z-modal: 60;
+  --z-popover: 70;
+  --z-toast: 80;
 
   /* Accent derived from the active theme preset (set by ThemePresetProvider).
      Defaults match the "Amethyst" preset so chrome looks right before hydration. */
@@ -82,6 +156,48 @@
   /* Backgrounds applied on top of other backgrounds when hovered/active */
   --elevate-1: rgba(0,0,0, .03);
   --elevate-2: rgba(0,0,0, .08);
+
+  /* ======================================================================
+     MOTION TOKENS — the CSS half of the motion system.
+     ----------------------------------------------------------------------
+     These MUST stay in sync with `DURATION` / `EASE_*` in
+     src/lib/motion.tsx. That file is the authority for JS animation and
+     this block is the authority for declarative CSS animation; the two are
+     duplicated deliberately so the animation engine and the stylesheet
+     cannot drift at runtime. The mapping is asserted in
+     tests/motion-system-vitest.test.tsx — if you change a number here, that
+     test will fail and tell you to change it there too.
+
+     DURATION SCALE (interaction only — never for loops):
+       instant 120ms   press feedback, thumbs, tooltips
+       fast    180ms   hover, focus rings, small popovers
+       base    280ms   the default: dialogs, menus, entrances
+       slow    420ms   sheets, large panels, page transitions
+       deliberate 600ms  rare, user-initiated choreography only
+
+     LOOP SCALE — deliberately outside the interaction scale. A looping
+     animation is never competing with a click, so it can be slow; folding
+     it into --dur-slow would make the skeleton shimmer strobe.
+       shimmer 1200ms, spin 900ms, pulse 2000ms, ambient 18s, orb 22s
+
+     EASING — mirrored from motion.tsx. --ease-out is the brand curve and is
+     already in use by the JS side; do not change it independently.
+     ====================================================================== */
+  --dur-instant: 120ms;
+  --dur-fast: 180ms;
+  --dur-base: 280ms;
+  --dur-slow: 420ms;
+  --dur-deliberate: 600ms;
+  --dur-shimmer: 1200ms;
+  --dur-spin: 900ms;
+  --dur-pulse: 2000ms;
+  --dur-ambient: 18s;
+  --dur-orb: 22s;
+
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
 
   --background: 210 20% 98%;
   --foreground: 222 47% 11%;
@@ -102,15 +218,54 @@
   --popover-border: 214 32% 91%;
   --primary: 185 65% 25%;
   --primary-foreground: 0 0% 100%;
+  /* Text-on-surface variant of --primary. In light mode --primary is already a
+     dark teal that reads as text (7.01:1 on --card), so this deliberately
+     mirrors it and produces zero visual change. In dark mode --primary has to
+     darken so white button labels pass 4.5:1, which makes it illegible as text
+     on the dark background — that is what this token is for. */
+  --primary-text: 185 65% 25%;
   --secondary: 210 40% 96%;
   --secondary-foreground: 222 47% 11%;
   --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
+  /* 4.30:1 on --muted at 47% L — fails WCAG 1.4.3 for the text-xs/text-sm
+     labels this token carries in ~30 places. 44% L clears 4.5:1 everywhere. */
+  --muted-foreground: 215 16% 44%;
   --accent: 210 40% 96%;
   --accent-foreground: 222 47% 11%;
+
+  /* ======================================================================
+     WHY --destructive IS SPLIT INTO A SURFACE AND A TEXT TOKEN
+     ----------------------------------------------------------------------
+     `--destructive` is a *button surface*: `bg-destructive` is painted behind
+     `--destructive-foreground` (near-white) label text in the `destructive`
+     Button variant and in Alert's destructive tone. That demands enough
+     contrast for white text ON the token.
+
+     `--destructive-text` is the same semantic colour used as *text on a
+     surface*: `text-destructive` on FormLabel / FormMessage error copy, and on
+     inline validation messages inside `--card`. That demands contrast between
+     the token and the CARD behind it.
+
+     These two requirements pull in opposite directions, so one token can never
+     satisfy both: a red dark enough to carry white text (e.g. 0 62% 30%, which
+     was the dark value here) is ~1.75:1 against a dark card and effectively
+     invisible, while a red light enough to read as text on a dark card cannot
+     carry white labels. Do not "simplify" these back into one token — that
+     regression is what made every dark-mode error message unreadable.
+
+     Rule of thumb: `bg-destructive` for fills, `text-destructive-text` for
+     text. The old `text-destructive` utility name still resolves to
+     --destructive for backwards compatibility, so existing call sites keep
+     working but should be migrated.
+     ====================================================================== */
   --destructive: 0 84% 60%;
   --destructive-foreground: 0 0% 100%;
-  --input: 214 32% 91%;
+  --destructive-text: 0 72% 45%; /* 5.81:1 on --card */
+
+  /* --input is the boundary of an interactive control and must meet WCAG
+     1.4.11 Non-text Contrast (3:1). --border is a passive divider and does not,
+     so the two are no longer forced to share a value. */
+  --input: 215 14% 52%;
   --ring: 185 65% 25%;
   --chart-1: 185 65% 25%;
   --chart-2: 215 50% 35%;
@@ -118,8 +273,15 @@
   --chart-4: 195 40% 60%;
   --chart-5: 225 30% 70%;
 
-  --app-font-sans: 'Inter', sans-serif;
-  --app-font-serif: Georgia, serif;
+  /* Arabic faces are named here and are actually loaded: index.html pulls
+     'Noto Sans Arabic' (sans) and 'Noto Naskh Arabic' (serif) from Google
+     Fonts alongside Inter. 'IBM Plex Sans Arabic' stays in the stack as a
+     second choice — an unavailable family is simply skipped by the browser,
+     which is harmless. Keep this stack and those <link>s in sync: a name here
+     with no matching webfont means Arabic silently falls back to whatever the
+     OS picks, which differs per platform. */
+  --app-font-sans: 'Inter', 'Noto Sans Arabic', 'IBM Plex Sans Arabic', system-ui, sans-serif;
+  --app-font-serif: Georgia, 'Noto Naskh Arabic', serif;
   --app-font-mono: Menlo, monospace;
   --radius: .5rem; /* 8px */
   --shadow-2xs: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0.00); /*replace with H S L */
@@ -165,6 +327,9 @@
 }
 
 .dark {
+  /* U4: see the :root color-scheme comment above. */
+  color-scheme: dark;
+
   --button-outline: rgba(255,255,255, .10);
   --badge-outline: rgba(255,255,255, .05);
 
@@ -183,7 +348,7 @@
   --sidebar: 222 47% 11%;
   --sidebar-foreground: 210 40% 98%;
   --sidebar-border: 217 32% 17%;
-  --sidebar-primary: 185 65% 35%;
+  --sidebar-primary: 185 65% 30%;
   --sidebar-primary-foreground: 0 0% 100%;
   --sidebar-accent: 217 32% 17%;
   --sidebar-accent-foreground: 210 40% 98%;
@@ -191,17 +356,24 @@
   --popover: 222 47% 11%;
   --popover-foreground: 210 40% 98%;
   --popover-border: 217 32% 17%;
-  --primary: 185 65% 35%;
+  --primary: 185 65% 30%;
   --primary-foreground: 0 0% 100%;
+  /* See the light-mode note: this is the readable-on-dark counterpart of the
+     surface token above (9.89:1 on --card). */
+  --primary-text: 185 70% 58%;
   --secondary: 217 32% 17%;
   --secondary-foreground: 210 40% 98%;
   --muted: 217 32% 17%;
   --muted-foreground: 215 20% 65%;
   --accent: 217 32% 17%;
   --accent-foreground: 210 40% 98%;
-  --destructive: 0 62% 30%;
+  --destructive: 0 62% 42%;
   --destructive-foreground: 0 0% 100%;
-  --input: 217 32% 17%;
+  /* See the long "WHY --destructive IS SPLIT" comment in :root. */
+  --destructive-text: 0 80% 66%; /* 5.61:1 on --card */
+  /* Was 217 32% 17% (shared with --border) = 1.21:1 against the dark card,
+     which fails WCAG 1.4.11 on every control edge. 215 20% 48% = 3.87:1. */
+  --input: 215 20% 48%;
   --ring: 185 65% 35%;
   --chart-1: 185 65% 35%;
   --chart-2: 215 50% 55%;
@@ -342,7 +514,9 @@
   }
 }
 
-/* Smooth, animated gradient for the authentication screens */
+/* Smooth, animated gradient for the authentication screens.
+   18s -> var(--dur-ambient): an 18s ambient drift is a loop, not an
+   interaction, so it lives in the loop scale. */
 @keyframes auth-gradient-shift {
   0% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
@@ -357,7 +531,7 @@
     hsl(195 55% 92%)
   );
   background-size: 200% 200%;
-  animation: auth-gradient-shift 18s ease infinite;
+  animation: auth-gradient-shift var(--dur-ambient) ease infinite;
 }
 
 .dark .auth-gradient {
@@ -369,7 +543,282 @@
   );
 }
 
-/* Respect users who prefer reduced motion */
+/* ==========================================================================
+   SHARED KEYFRAMES — the CSS patterns the UI already needs, plus the three
+   that were missing. Every one of these is token-driven so there is exactly
+   one place to retune the feel of the app.
+
+   NOTE ON `.skeleton-shimmer`: the duration was 1.6s, which swept the
+   gradient across a placeholder so slowly that the first paint of a loading
+   table read as a frozen UI rather than as work in progress. 1.2s
+   (--dur-shimmer) is the fastest value that still reads as a slow sheen
+   instead of a flicker.
+   ========================================================================== */
+
+/* Skimmer keyframes for skeleton placeholders.
+   Uses a moving linear-gradient instead of opacity pulse to read as
+   "loading" rather than "waiting", and animates a CSS var so it
+   composes well with theme changes. */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.skeleton-shimmer {
+  animation: skeleton-shimmer var(--dur-shimmer) ease-in-out infinite;
+}
+
+/* Soft presence pulse. Use for "live"/"recording" affordances that must be
+   noticeable but must never compete with a value the user is reading.
+   Deliberately low-contrast: opacity 1 -> 0.55, not 1 -> 0. */
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.animate-soft-pulse {
+  animation: soft-pulse var(--dur-pulse) var(--ease-in-out) infinite;
+}
+
+/* One-shot entrance for content that replaces or reveals content (empty
+   states, inline results). Mirrors the `fadeIn` variant in
+   src/lib/motion.tsx. `--ease-out` is the brand curve: fast departure, long
+   soft arrival. */
+@keyframes motion-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-motion-fade-in {
+  animation: motion-fade-in var(--dur-base) var(--ease-out) both;
+}
+
+/* One-shot entrance for a block that should feel like it is settling into
+   place. 8px matches the `slideUp` variant in src/lib/motion.tsx — 16px+ on
+   clinical content competes with the content for attention. */
+@keyframes motion-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-motion-slide-up {
+  animation: motion-slide-up var(--dur-base) var(--ease-out) both;
+}
+
+/* Progress indicator. Replaces Tailwind's `animate-spin` (0.5s, 1s period)
+   for anything that is *our* primitive, so a busy indicator reads as
+   deliberate rather than as a browser default. Tailwind's `animate-spin`
+   survives because it is used in ~10 places we do not own; the reduced-data
+   guard at the end of this file covers both. */
+@keyframes motion-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-motion-spin {
+  animation: motion-spin var(--dur-spin) linear infinite;
+}
+
+:root {
+  --skeleton-base: hsl(var(--muted) / 0.55);
+  --skeleton-highlight: hsl(var(--muted-foreground) / 0.12);
+}
+
+.dark {
+  --skeleton-base: hsl(var(--muted) / 0.6);
+  --skeleton-highlight: hsl(var(--muted-foreground) / 0.18);
+}
+
+/* ==========================================================================
+   DATA-STATE MOTION HELPERS
+   --------------------------------------------------------------------------
+   tw-animate-css implements Radix's enter/exit entirely through two custom
+   properties. Its `animate-in` / `animate-out` shorthand resolves to:
+
+       animation: enter var(--tw-animation-duration, var(--tw-duration, .15s))
+                         var(--tw-ease, ease) ...
+
+   Because `--tw-animation-duration` is checked FIRST, setting it directly
+   overrides both the library's 150ms default AND any Tailwind `duration-*`
+   utility on the same element. That is how every primitive in
+   src/components/ui/** ends up on one duration scale without a single
+   hardcoded millisecond value left in a component.
+
+   These classes live in a plain (unlayered) block on purpose. Tailwind emits
+   its own utilities into the `utilities` cascade layer, and unlayered styles
+   beat layered ones, so these cannot be accidentally outranked by a
+   `duration-*` utility somebody adds later.
+
+   Usage (duration + easing are orthogonal, combine freely):
+       className="anim-base anim-ease-emphasized data-[state=open]:animate-in"
+   ========================================================================== */
+.anim-instant { --tw-animation-duration: var(--dur-instant); }
+.anim-fast { --tw-animation-duration: var(--dur-fast); }
+.anim-base { --tw-animation-duration: var(--dur-base); }
+.anim-slow { --tw-animation-duration: var(--dur-slow); }
+.anim-deliberate { --tw-animation-duration: var(--dur-deliberate); }
+
+/* Enter defaults to the brand curve; exits override with anim-ease-emphasized.
+   An exit should read as "this got out of the way", not as "this was taken". */
+.anim-ease-out { --tw-ease: var(--ease-out); }
+.anim-ease-in { --tw-ease: var(--ease-in); }
+.anim-ease-in-out { --tw-ease: var(--ease-in-out); }
+.anim-ease-emphasized { --tw-ease: var(--ease-emphasized); }
+
+/* --------------------------------------------------------------------------
+   TRANSITION equivalents of the `.anim-*` helpers above.
+
+   `.anim-*` set `--tw-animation-duration` / `--tw-ease`, which only the
+   tw-animate `animate-in` shorthand reads. These set the real CSS properties,
+   for transitions (hover, focus, collapse, progress).
+
+   Named `ease-curve-*` rather than `ease-*` on purpose: Tailwind already owns
+   `ease-out` / `ease-in` / `ease-in-out` as transition-timing-function
+   utilities with different control points (Tailwind's `ease-out` is
+   `cubic-bezier(0, 0, .2, 1)`, not our brand curve). Reusing those names here
+   would silently override Tailwind's on every `ease-out` in the app. Do not
+   rename these.
+   -------------------------------------------------------------------------- */
+.dur-instant { transition-duration: var(--dur-instant); }
+.dur-fast { transition-duration: var(--dur-fast); }
+.dur-base { transition-duration: var(--dur-base); }
+.dur-slow { transition-duration: var(--dur-slow); }
+
+.ease-curve-out { transition-timing-function: var(--ease-out); }
+.ease-curve-in { transition-timing-function: var(--ease-in); }
+.ease-curve-in-out { transition-timing-function: var(--ease-in-out); }
+.ease-curve-emphasized { transition-timing-function: var(--ease-emphasized); }
+
+/* ==========================================================================
+   INTERACTIVE PRIMITIVE MOTION
+   --------------------------------------------------------------------------
+   `transition-property` is written out rather than using Tailwind's
+   `transition-colors` because the focus transition has to include
+   `box-shadow`: the focus ring is a shadow, and `transition-colors` does not
+   list it, so today the ring appears in a single frame while the border
+   animates. Nothing here touches a layout-affecting property — only
+   colour, box-shadow, opacity and transform — so nothing here can reflow the
+   page or shift what the user is aiming at.
+   ========================================================================== */
+
+/* Buttons and other pressable controls: ~2% press. Big enough to read as
+   "registered", small enough that the label never appears to move. */
+.pressable {
+  transition-property: color, background-color, border-color, box-shadow,
+    opacity, transform;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+}
+
+/* A disabled control must not animate — not the press, not the hover tint.
+   `:disabled` cannot be used alone because aria-disabled controls are still
+   focusable and still match :active. */
+.pressable:active:not(:disabled):not([aria-disabled="true"]) {
+  transform: scale(0.98);
+}
+
+/* Cards that are genuinely activatable. The lift is 2px, deliberately under
+   the 4px of the legacy `hoverLift`: a clinical card is often a dense block of
+   numbers the user is reading, and anything that moves under the pointer makes
+   the next row harder to hit. */
+.card-interactive {
+  cursor: pointer;
+  transition-property: transform, box-shadow, border-color;
+  transition-duration: var(--dur-base);
+  transition-timing-function: var(--ease-out);
+}
+.card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Form controls: animate the ring and the border together, never the box.
+   `box-shadow` and `border-color` are both layout-neutral. */
+.field-focus-transition {
+  transition-property: color, background-color, border-color, box-shadow;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+}
+
+/* Table rows: colour only. A row that moves on hover makes a long patients
+   list much harder to scan down a column. */
+.row-transition {
+  transition-property: color, background-color, border-color;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
+}
+
+/* Global focus-visible safety net.
+   Radix + shadcn components already set their own focus rings, but
+   third-party icons, SVGs, or any custom interactive element without a
+   Tailwind focus utility will still get a clear, theme-aware ring.
+
+   NOTE: do not add `border-radius` here. Setting a radius on :focus-visible
+   mutates the *shape* of the focused element: a `rounded-full` avatar or a
+   `rounded-2xl` card visibly squares off its corners for as long as it holds
+   focus. An outline follows the element's own border-radius, so the ring stays
+   circular/rounded without this declaration. */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Deliberately NOT suppressing the outline on inputs, textareas and selects.
+   An earlier version of this file did:
+       input:focus-visible, textarea:focus-visible, select:focus-visible
+         { outline: none; }
+   on the assumption that every field draws its own ring. That is false — bare
+   `<input className="border-input … rounded-md">` elements (e.g. the clinical
+   fields in src/components/patient-record-form.tsx) carry no focus utility at
+   all, so the suppression left them with *no* focus indicator. shadcn's Input /
+   Textarea / Select opt into `focus-visible:outline-none` themselves and draw a
+   2px ring instead, so keeping the global outline is safe for them and restores
+   an indicator for everything else. WCAG 2.2 SC 2.4.11 (Focus Appearance, AA). */
+
+/* Respect users who prefer reduced motion.
+   ---------------------------------------------------------------------------
+   This is layer 1 of the three-layer reduced-motion story documented in the
+   header of src/lib/motion.tsx. It covers *every* class-driven animation with
+   no JavaScript, on the first paint.
+
+   WHY `!important`: Tailwind's `duration-*` utilities, tw-animate-css's
+   `animate-in` shorthand and every `.anim-*` class in this file set
+   transition/animation durations through the cascade. Only `!important`
+   reliably beats them, and this block has to win unconditionally — a missed
+   `!important` here means an animation some user cannot turn off.
+
+   WHY THIS IS NOT ENOUGH ON ITS OWN: framer-motion integrates its springs in
+   JavaScript and drives `layout` / `layoutId` shared-layout transitions from
+   its projection node. Neither produces a CSS transition for this block to
+   shorten, and `MotionConfig reducedMotion="user"` does not suppress layout
+   animations. JS-driven motion must additionally check `useMotionPrefs()`.
+
+   The transform overrides below are the one thing the duration clamp cannot do
+   on its own: it turns an animation into an instant snap, and an instant snap
+   that moves a 400px card 2px still moves the content out from under the
+   pointer. Colour-only changes are left to snap — that is what the duration
+   clamp is for, and an instant colour change is exactly the intended
+   "no animation, just the new state" behaviour. */
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;
@@ -382,6 +831,13 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+
+  /* Never translate or scale. Pure state changes (a border tinting, a ring
+     appearing) are fine; anything that displaces content is not. */
+  .card-interactive:hover,
+  .pressable:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: none;
+  }
 }
 
 /* ==========================================================================
@@ -393,13 +849,13 @@
    it follows the active theme preset.
    ========================================================================== */
 :root {
-  --glass-bg: rgba(18, 18, 22, 0.55);
-  --glass-border: rgba(255, 255, 255, 0.12);
-  --glass-blur: 26px;
-  --glass-radius: 24px;
-  --glass-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
-  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  --glass-hairline: rgba(255, 255, 255, 0.10);
+  --glass-bg: rgba(255, 255, 255, 0.65);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-blur: 12px;
+  --glass-radius: 16px;
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --glass-hairline: rgba(0, 0, 0, 0.06);
 }
 
 .glass-panel {
@@ -411,6 +867,16 @@
   box-shadow: var(--glass-shadow), var(--glass-inner);
 }
 
+/* Dark-mode glass: deep translucent surface with light border/highlight */
+.dark {
+  --glass-bg: rgba(18, 18, 22, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-blur: 16px;
+  --glass-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+  --glass-inner: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --glass-hairline: rgba(255, 255, 255, 0.10);
+}
+
 /* Thin titlebar strip: traffic-light dots + 1px hairline divider below them. */
 .glass-titlebar {
   border-bottom: 1px solid var(--glass-hairline);
@@ -418,15 +884,18 @@
 
 /* Muted default icon rail state; brightens on hover/active. */
 .rail-icon {
-  color: rgba(255, 255, 255, 0.55);
-  transition: color 0.15s ease, background-color 0.15s ease;
+  color: hsl(var(--muted-foreground));
+  /* 0.15s ease -> var(--dur-fast) + var(--ease-out). Hover tint on a dock
+     icon should feel like the same 180ms as every other hover in the app. */
+  transition: color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out);
 }
 .rail-icon:hover {
-  color: rgba(255, 255, 255, 0.95);
+  color: hsl(var(--foreground));
 }
 /* Active/open app gets the accent-tinted highlight pill. */
 .rail-icon-active {
-  color: #ffffff;
+  color: hsl(var(--accent-foreground));
   background-color: var(--accent-soft);
 }
 
@@ -434,14 +903,16 @@
    Driven by --accent-soft / --accent-soft-strong set by ThemePresetProvider. */
 .dock-app-btn {
   background-color: var(--accent-soft);
-  transition: background-color 0.15s ease;
+  /* 0.15s ease -> var(--dur-fast) + var(--ease-out) */
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 .dock-app-btn:hover {
   background-color: var(--accent-soft-strong);
 }
 .launch-tile {
   background-color: var(--accent-soft);
-  transition: background-color 0.15s ease;
+  /* 0.15s ease -> var(--dur-fast) + var(--ease-out) */
+  transition: background-color var(--dur-fast) var(--ease-out);
 }
 .launch-tile:hover {
   background-color: var(--accent-soft-strong);
@@ -480,6 +951,27 @@
   background: radial-gradient(120% 120% at 50% 50%, transparent 55%, rgb(0 0 0 / 0.55) 100%);
 }
 
+/* ==========================================================================
+   .auth-shell-scroll — opt-in scroll for the auth shell.
+
+   `.auth-shell` sets `overflow: hidden` so the ambient orbs stay put. On a
+   phone, focusing the password field shrinks the *visual* viewport (the
+   on-screen keyboard), and with a `100dvh` box that is clipped rather than
+   scrolled: the Submit button and the OTP boxes end up below an unscrollable
+   edge, i.e. the login wall becomes impossible to pass.
+
+   Applied by pages/auth.tsx alongside `.auth-shell`. Uses `min-height: 100svh`
+   because `svh` is the *small* viewport height and so does not resize when the
+   keyboard appears; `100dvh` is kept as the fallback for older engines via the
+   cascade below (browsers that do not understand `svh` drop the declaration).
+   ========================================================================== */
+.auth-shell-scroll {
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 /* Decorative ambient orbs (kept low-opacity + blurred, never neon) */
 .auth-orb {
   position: absolute;
@@ -497,7 +989,9 @@
 }
 
 .auth-orb-animate {
-  animation: auth-orb-drift 22s ease-in-out infinite;
+  /* 22s -> var(--dur-orb): a 22s decorative drift is a loop, not an
+     interaction, so it lives on the loop scale. */
+  animation: auth-orb-drift var(--dur-orb) ease-in-out infinite;
   will-change: transform;
 }
 
@@ -529,10 +1023,13 @@
   color: #f6f5f7;
   background-color: hsl(var(--auth-panel) / 0.04);
   border-color: hsl(var(--auth-panel) / 0.12);
+  /* 180ms ease (x3) -> var(--dur-fast) + var(--ease-out). The focus ring is a
+     box-shadow, so listing it explicitly is what makes the ring fade in with
+     the border instead of appearing in one frame. */
   transition:
-    border-color 180ms ease,
-    background-color 180ms ease,
-    box-shadow 180ms ease;
+    border-color var(--dur-fast) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 .auth-field::placeholder {
   color: hsl(var(--auth-panel) / 0.36);
@@ -563,7 +1060,13 @@
   box-shadow:
     0 1px 0 0 hsl(var(--auth-panel) / 0.22) inset,
     0 10px 26px -12px hsl(var(--auth-crimson) / 0.9);
-  transition: transform 140ms ease, box-shadow 180ms ease, filter 180ms ease;
+  /* transform 140ms -> var(--dur-instant) (it fires on pointer-down, so it
+     must be over before the click resolves); box-shadow/filter 180ms ->
+     var(--dur-fast). */
+  transition:
+    transform var(--dur-instant) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    filter var(--dur-fast) var(--ease-out);
 }
 .auth-submit:hover:not(:disabled) {
   filter: brightness(1.07);
@@ -584,7 +1087,11 @@
   color: #fff;
   border: 1px solid hsl(var(--auth-panel) / 0.55);
   background-color: hsl(var(--auth-panel) / 0.03);
-  transition: background-color 160ms ease, border-color 160ms ease, transform 140ms ease;
+  /* 160ms -> var(--dur-fast); transform 140ms -> var(--dur-instant) */
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-instant) var(--ease-out);
 }
 .auth-ghost:hover:not(:disabled) {
   background-color: hsl(var(--auth-panel) / 0.14);
@@ -594,11 +1101,11 @@
   transform: translateY(1px) scale(0.99);
 }
 
-/* Shared visible focus ring for every interactive element on the screen */
+/* Shared visible focus ring for every interactive element on the screen.
+   No border-radius here either — see the global :focus-visible note above. */
 .auth-shell :is(a, button, input, [tabindex]):focus-visible {
   outline: 2px solid hsl(var(--auth-crimson-soft));
   outline-offset: 2px;
-  border-radius: 0.375rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -606,3 +1113,245 @@
     animation: none;
   }
 }
+
+/* High-contrast users (Windows High Contrast, forced-colors mode) */
+@media (prefers-contrast: more) {
+  :root {
+    --border: 0 0% 20%;
+    /* --input is the control boundary, so it must follow --border here rather
+       than keeping its own value. */
+    --input: 0 0% 20%;
+    --muted-foreground: 222 47% 25%;
+  }
+  .dark {
+    --border: 0 0% 80%;
+    --input: 0 0% 80%;
+    --muted-foreground: 210 40% 90%;
+  }
+  :is(button, a, input, select, textarea, [role="button"]):focus-visible {
+    outline: 3px solid CanvasText;
+    outline-offset: 2px;
+  }
+}
+
+/* Reduced data: skip wallpaper, glass blur, and decorative gradients.
+   ---------------------------------------------------------------------------
+   This block previously only stripped `backdrop-filter` and gradient
+   backgrounds. It now also stops looping animation, for the reason spelled out
+   in `prefersLessMotion()` in src/lib/motion-preferences.ts: a user who asks for
+   less data is, in practice, the same user who asked for less motion, and an
+   indefinitely repeating repaint is the most expensive thing in the list.
+
+   These declarations are `!important` and live OUTSIDE any cascade layer,
+   which is deliberate: Tailwind emits `.animate-spin` into the `utilities`
+   layer, and an unlayered important declaration outranks a layered one
+   regardless of specificity. Non-looping, one-shot motion (the dialog/overlay
+   `data-state` entrances) is deliberately NOT touched here — it costs one
+   repaint, it carries orientation, and removing it would make overlays appear
+   with no indication of where they came from. */
+@media (prefers-reduced-data: reduce) {
+  .glass-panel {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+  [style*="radial-gradient"],
+  [style*="linear-gradient"] {
+    background-image: none !important;
+  }
+  /* Loading shimmer: the single most expensive loop in the app, and the one
+     the skeleton primitive also gates from JS (see src/components/ui/skeleton.tsx).
+     Both paths are needed — this one is correct on the very first paint,
+     before React has rendered anything. */
+  .skeleton-shimmer,
+  .animate-motion-spin,
+  .animate-soft-pulse,
+  .auth-gradient,
+  .auth-orb-animate,
+  .animate-spin {
+    animation: none !important;
+  }
+  /* Never displace content when data is the scarce resource either. */
+  .card-interactive:hover,
+  .pressable:active:not(:disabled):not([aria-disabled="true"]) {
+    transform: none;
+  }
+}
+
+/* ==========================================================================
+   RTL FOUNDATION — read this before writing any layout utility
+   ==========================================================================
+   Arabic (`ar`) is a first-class, fully-translated locale in this app, and
+   index.html's pre-hydration script already sets `dir="rtl"` on <html>.
+   Nothing in the token layer used to care, so RTL was broken in practice.
+
+   THE CONVENTION (enforced by review, not by tooling):
+
+     MANDATORY for new code — logical properties/utilities only:
+       margin      ms-*  me-*          (never ml-* / mr-*)
+       padding     ps-*  pe-*          (never pl-* / pr-*)
+       inset       start / end / inset-inline-*   (never left-* / right-*)
+       border      border-s / border-e (never border-l / border-r)
+       text align  text-start / text-end (never text-left / text-right)
+       float       float-start / float-end (never float-left / float-right)
+       transform   translate-x via `start`/`end` scale tokens where possible
+
+     A physical direction utility in new code is a DEFECT, not a style
+     preference: it silently renders mirrored-but-wrong in the other locale.
+     `rg -n "\b(ml|mr|pl|pr)-|\b(left|right)-|border-[lr]\\b|text-(left|right)"
+     src` before opening a PR. Do not "fix" a call site by swapping in another
+     physical utility.
+
+     EXCEPTIONS (physical is correct here):
+       - flip/carousel/chart geometry driven by numeric indices
+       - absolutely-positioned overlays anchored to a viewport edge
+       - anything that is intentionally reading-order specific
+
+   The `dir` attribute is set pre-hydration by the inline script in index.html;
+   Tailwind v4 also ships `rtl:` / `ltr:` variants, so `rtl:` is available for
+   the rare cases that genuinely need a direction-specific override.
+   ========================================================================== */
+
+/* Direction-sensitive declarations that live in this file. Everything else in
+   index.css already uses logical properties (`inset`, `inset-inline`, logical
+   flexbox, `border-radius`), so there was nothing global left to convert.
+
+   The only physical values in this stylesheet are gradient angles and
+   radial-gradient anchor positions, which are literal "up and to the right"
+   geometry and do need mirroring. */
+[dir="rtl"] .auth-gradient {
+  background-image: linear-gradient(
+    225deg,
+    hsl(185 65% 95%),
+    hsl(210 40% 96%),
+    hsl(195 55% 92%)
+  );
+}
+
+.dark[dir="rtl"] .auth-gradient {
+  background-image: linear-gradient(
+    225deg,
+    hsl(222 47% 11%),
+    hsl(217 32% 15%),
+    hsl(222 40% 13%)
+  );
+}
+
+/* The auth welcome panel's radial highlight is anchored at the top-left in LTR
+   ("the reading start"); mirror the anchor rather than the angle. */
+[dir="rtl"] .auth-welcome {
+  background:
+    radial-gradient(100% 100% at 80% 0%, hsl(var(--auth-crimson-soft) / 0.30) 0%, transparent 55%),
+    linear-gradient(215deg, hsl(var(--auth-crimson) / 0.55) 0%, hsl(160 60% 18%) 48%, #06120c 100%);
+}
+
+[dir="rtl"] .auth-shell {
+  background-image:
+    radial-gradient(80% 60% at 88% 8%, hsl(var(--auth-crimson) / 0.16) 0%, transparent 60%),
+    radial-gradient(70% 70% at 12% 92%, hsl(var(--auth-crimson) / 0.13) 0%, transparent 62%),
+    linear-gradient(200deg, #08100f 0%, #06090a 55%, #050a08 100%);
+}
+
+/* ==========================================================================
+   PRINT
+   ==========================================================================
+   src/pages/patient-record-view.tsx exposes a "Print patient record" button
+   that calls window.print(). Before this block existed, printing emitted the
+   sidebar, every nav control, hover elevations and full-resolution PHI
+   thumbnails onto paper.
+
+   SCOPE / DISCLAIMER: this block only removes *application chrome*. It does
+   not decide what may be printed, it does not redact PHI, and it does not
+   make printing safe. Whether a given record may be printed, in what
+   jurisdictions, and with what retention/disposal guarantees is the
+   OPERATOR'S responsibility under the local PHI/PII policy. Nothing here
+   should be read as a compliance control.
+
+   CONTRACT for layout code (owned outside this file):
+     - sidebar / topbar / dock / command palette  -> add data-print="chrome"
+     - any element that must not reach paper      -> add data-print="hidden"
+
+   These rules are opt-in, which means the inverse also holds: a shell element
+   that forgets the attribute prints anyway. Every chrome owner MUST add
+   data-print="chrome" to their sidebar/topbar.
+   ========================================================================== */
+@media print {
+  /* App chrome. */
+  [data-print="chrome"],
+  [data-print="hidden"] {
+    display: none !important;
+  }
+
+  /* Radix/shadcn overlays are portalled to <body>; they must never print. */
+  [role="dialog"],
+  [role="alertdialog"],
+  [role="menu"],
+  [role="listbox"],
+  [data-radix-popper-content-wrapper],
+  .toaster,
+  [data-sonner-toaster] {
+    display: none !important;
+  }
+
+  /* Let paginated content flow instead of being clipped inside the app's
+     scroll containers — otherwise only the first viewport of a long record
+     reaches the printer. */
+  main,
+  [data-print="scroll"] {
+    overflow: visible !important;
+    max-height: none !important;
+    height: auto !important;
+    padding: 0 !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    /* Let the page break across sheets at all. */
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* Avoid orphaned headings and split table rows. */
+  h1, h2, h3, h4, h5, h6 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+  table, tr, li, blockquote, figure, img {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  thead {
+    display: table-header-group; /* repeat header on every printed page */
+  }
+
+  /* Interactive affordances are meaningless on paper. */
+  :is(button, [role="button"], [role="tab"]) {
+    pointer-events: none;
+  }
+
+  /* Colour adjustment is NOT forced globally — that wastes ink and is a
+     common source of muddy printouts. Only the two cases that genuinely lose
+     meaning without colour are opted in:
+       - status dots / chart swatches, where the colour IS the data
+       - the skeleton placeholders, which would otherwise print as blank boxes
+         and be mistaken for real values. */
+  [data-print="keep-color"],
+  .skeleton-shimmer {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Kill animation/transition so a mid-animation element is not captured
+     half-rendered. `transform: none` is added because the duration clamp alone
+     would leave `.card-interactive:hover` as an instant 2px jump — on paper
+     that is a card printed slightly off its own grid. */
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    box-shadow: none !important;
+    transform: none !important;
+  }
+}
+

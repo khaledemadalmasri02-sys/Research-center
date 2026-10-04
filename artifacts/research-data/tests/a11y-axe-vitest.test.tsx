@@ -29,10 +29,7 @@ describe("accessibility — axe-core (P3.4)", () => {
 
   it("a successful OTP submission state has no axe violations", async () => {
     const { container } = render(
-      <OtpVerification
-        onVerify={async () => true}
-        onResend={() => {}}
-      />,
+      <OtpVerification onVerify={async () => true} onResend={() => {}} />,
     );
     // The success heading replaces the form; the rendered DOM should
     // still pass axe.

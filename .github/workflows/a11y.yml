@@ -1,0 +1,129 @@
+name: a11y
+
+# Page-level axe scan: loads every public + authenticated route of
+# artifacts/research-data and asserts zero serious / critical
+# @axe-core/playwright violations. Component-level axe tests already run
+# in CI; this adds the route-level coverage flagged in
+# docs/accessibility-audit.md §10.
+#
+# Runs only on PR + main push. Cheap enough (<3 min) to keep on every PR
+# but expensive enough not to fire on forks every push.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    paths:
+      - "artifacts/research-data/**"
+      - "docs/accessibility-audit.md"
+      - ".github/workflows/a11y.yml"
+
+permissions:
+  contents: read
+
+# Cancels a superseded run when the same PR is pushed again.
+concurrency:
+  group: a11y-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  setup:
+    name: setup (pnpm install)
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Compute node_modules cache key
+        id: key
+        run: echo "key=node-modules-22-$(pnpm --version)-$(hashFiles('pnpm-lock.yaml') | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ steps.key.outputs.key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+  # One matrix entry per shell. The classic shell and the apex desktop shell
+  # have completely different render trees (window chrome + dock + wallpaper
+  # vs sidebar + <main>), so they are genuinely separate scans — a single job
+  # running both would hide which shell regressed, and the previous setup used
+  # `--grep "desktop"` against a job that also ran everything else.
+  axe:
+    name: axe (${{ matrix.shell }} shell)
+    runs-on: ubuntu-latest
+    needs: setup
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [classic, desktop]
+    env:
+      BASE_PATH: /
+    defaults:
+      run:
+        working-directory: artifacts/research-data
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Build SPA for static serving
+        run: pnpm run build
+      - name: Serve dist on :4173
+        run: |
+          python3 -m http.server 4173 --directory dist/public &
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            curl -sf http://127.0.0.1:4173/ >/dev/null && break
+            sleep 1
+          done
+      - name: Install Playwright + axe browsers
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run @axe-core/playwright across every ${{ matrix.shell }} route
+        env:
+          BASE_URL: http://127.0.0.1:4173
+        run: |
+          if [ ! -d tests/a11y-pages ]; then
+            echo "::error::tests/a11y-pages directory missing"
+            exit 1
+          fi
+          pnpm exec playwright test tests/a11y-pages --reporter=list \
+            --grep "${{ matrix.shell }}"
+      - name: Upload Playwright artefacts on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: playwright-report-${{ matrix.shell }}
+          path: artifacts/research-data/playwright-report
+          retention-days: 5
