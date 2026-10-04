@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 180" role="img" aria-label="ResCenter monochrome on dark">
+  <title>ResCenter monochrome on dark</title>
+  <defs>
+    <linearGradient id="mTile" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#022C22"/>
+      <stop offset="100%" stop-color="#0A1F2A"/>
+    </linearGradient>
+    <filter id="mGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <g transform="translate(20,20)">
+    <rect x="0" y="0" width="140" height="140" rx="28" fill="url(#mTile)"
+          stroke="#5EEAD4" stroke-opacity="0.4" stroke-width="1"/>
+    <g filter="url(#mGlow)">
+      <circle cx="70" cy="70" r="52" fill="none" stroke="#5EEAD4" stroke-width="1" opacity="0.5"/>
+      <circle cx="70" cy="70" r="36" fill="none" stroke="#5EEAD4" stroke-width="1.2" opacity="0.85"/>
+      <line x1="70" y1="14"  x2="70" y2="28" stroke="#5EEAD4" stroke-width="1.2"/>
+      <line x1="70" y1="112" x2="70" y2="126" stroke="#5EEAD4" stroke-width="1.2"/>
+      <line x1="14"  y1="70" x2="28"  y2="70" stroke="#5EEAD4" stroke-width="1.2"/>
+      <line x1="112" y1="70" x2="126" y2="70" stroke="#5EEAD4" stroke-width="1.2"/>
+    </g>
+    <g>
+      <path d="M82 56 V92 a25 8 0 0 0 50 0 V56 Z" fill="#0F766E" opacity="0.85"/>
+      <ellipse cx="107" cy="92" rx="25" ry="8" fill="#042F2E"/>
+      <ellipse cx="107" cy="75" rx="25" ry="8" fill="#0E7490" opacity="0.7"/>
+      <ellipse cx="107" cy="56" rx="25" ry="8" fill="#5EEAD4"/>
+      <ellipse cx="100" cy="54" rx="10" ry="2.5" fill="#FFFFFF" opacity="0.4"/>
+    </g>
+    <g transform="translate(0,4)" filter="url(#mGlow)">
+      <path d="M82 96 a25 9 0 0 1 50 0" fill="none" stroke="#0F766E" stroke-width="1.4"/>
+      <path d="M82 96 a25 9 0 0 0 50 0" fill="none" stroke="#5EEAD4" stroke-width="1.7"/>
+      <circle cx="129" cy="94" r="2" fill="#ECFEFF"/>
+    </g>
+    <g transform="translate(120,20)">
+      <circle r="5.5" fill="#5EEAD4" opacity="0.25"/>
+      <circle r="3.5" fill="#5EEAD4"/>
+    </g>
+  </g>
+
+  <g transform="translate(190,0)" fill="#ECFEFF">
+    <text x="0" y="100" font-family="Inter, Segoe UI, system-ui, sans-serif"
+          font-size="56" font-weight="700" letter-spacing="-2">ResCenter</text>
+    <text x="2" y="128" font-family="Inter, Segoe UI, system-ui, sans-serif"
+          font-size="12" font-weight="500" letter-spacing="4" fill="#5EEAD4">
+      RADIOLOGY RESEARCH DATA PLATFORM
+    </text>
+  </g>
+</svg>

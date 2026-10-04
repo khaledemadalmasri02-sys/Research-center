@@ -2,6 +2,82 @@
 
 **Date:** 2026-09-07 · **Scope:** research-data SPA (`artifacts/research-data/src/`) · **Tooling:** `axe-core` 4.10 + `jest-axe` matchers in `tests/a11y-axe-vitest.test.tsx`.
 
+> ## Remediation status addendum — 2026-10-19
+>
+> The body of this document below is the **original 2026-09-07 snapshot** and
+> is left unedited so the original methodology and reasoning stay readable.
+> This addendum is the current state. Every item was checked against the
+> source at the cited `file:line` unless marked *taken on trust*.
+>
+> ### Colour contrast
+>
+> | Item | Status | Evidence |
+> |---|---|---|
+> | §1 `--muted-foreground` light contrast ("4.49:1, just under 4.5") | **FIXED** | `artifacts/research-data/src/index.css:127` — `215 16% 44%`, **4.79:1** on `--muted` (was `215 16% 47%` = 4.30:1). Note the original figure of 4.49 was measured against a white `--background`; against the token's real background (`--muted`) it was 4.30. Either way it is now above 4.5. |
+> | §1 proposed `215 16% 40%` | **SUPERSEDED** | The shipped value is 44%, not 40%. Measured 4.79:1, which clears AA with margin; 40% would have been visually heavier than intended. |
+> | §1 dark-mode muted foreground | unchanged | `index.css:262` — `215 20% 65%` = **5.76:1** on `--muted`. |
+> | New: `--input` non-text contrast | **FIXED** | `index.css:163` (light `215 14% 52%` = **3.75:1** on `--background`), `:271` (dark `215 20% 48%` = **3.87:1**). Previously shared with `--border` at 1.19 / 1.21. Clears WCAG 1.4.11. |
+> | New: dark `--destructive` | **FIXED (split)** | `index.css:265-268`. `--destructive` is now a *surface* token (`0 62% 42%`, 6.70:1 with white) and a new `--destructive-text` (`0 80% 66%`, **5.61:1** on `--card`) carries error text. The old single value `0 62% 30%` was **1.75:1** on the dark card — that is the regression that made error messages invisible. |
+> | New: dark `--primary` | **FIXED (split)** | `index.css:254-258`. `--primary` → `185 65% 30%` (white label 4.12 → **5.33**); new `--primary-text` `185 70% 58%` = **9.89:1** on `--card`. |
+> | **Light `--destructive` with white text** | **STILL FAILING — open item** | `index.css:156` — `0 84% 60%` with `#fff` measures **3.78:1**, below the 4.5:1 needed for normal-size text. Do not report light-mode destructive buttons as AA-compliant. Recorded in `STATUS.md` "Still open" #7. |
+>
+> ### Focus
+>
+> | Item | Status | Evidence |
+> |---|---|---|
+> | 1 px focus rings | **FIXED** | `components/ui/button.tsx:8`, `components/ui/input.tsx:11`, `components/ui/checkbox.tsx:26` all moved `focus-visible:ring-1` → `focus-visible:ring-2` with `ring-offset-1 ring-offset-background`. WCAG 2.2 SC **2.4.11 Focus Appearance (AA)**. |
+> | 16 px checkboxes below the target-size minimum | **FIXED** | `components/ui/checkbox.tsx:20-26` — visual box stays `h-4 w-4`; the hit area is grown with `after:absolute after:-inset-1.5` (16 + 2×6 = **28 px**) inside a `pointer-events-none h-6 w-6` wrapper. WCAG **2.5.8 Target Size (Minimum, AA)**. |
+> | Global `outline: none` on inputs / textareas / selects | **FIXED** | `index.css:481-491` — the suppression rule is gone and replaced by a comment explaining why it must not return: bare `border-input` inputs carry no focus utility and were left with no indicator. |
+> | `:focus-visible` `border-radius` shape mutation | **FIXED** | The global rule (`index.css:476-479`) and the auth-screen rule (`index.css:730-733`) no longer set `border-radius`. An outline follows the element's own radius; setting one squared off `rounded-full` avatars and `rounded-2xl` cards while focused. |
+> | `prefers-contrast` unhandled | **FIXED** | `index.css:742-759` — overrides `--border`/`--input`/`--muted-foreground` per mode and raises the focus ring to `3px solid CanvasText`. |
+> | `prefers-reduced-data` unhandled | **FIXED** | `index.css:762-771` — strips `backdrop-filter` from `.glass-panel` and removes all `radial-gradient`/`linear-gradient` backgrounds. |
+> | `color-scheme` undeclared | **FIXED** | `index.css:80` (`color-scheme: light`) and `:226` (`color-scheme: dark`). Without it, native widgets (`<select>` popups, date pickers, scrollbars, autofill) rendered in light appearance while `.dark` was active. |
+> | No `@media print` | **FIXED** | `index.css:870-946`. Hides `[data-print="chrome"]` / `[data-print="hidden"]` and every portalled Radix layer, unclips `main` for pagination, repeats `thead`, zeroes animation. **Not a compliance control** — it removes chrome, does not redact PHI or decide what may be printed. |
+> | No RTL foundation | **FIXED (documented convention)** | `index.css:773-845`. Logical properties are now mandatory for new code. **Enforced by review only — there is no lint rule**, so a physical utility can still land. |
+>
+> ### Semantics
+>
+> | Item | Status | Evidence |
+> |---|---|---|
+> | Unlabelled `<Label>` elements | **STILL VALID** | Measured 2026-10-19: **48 `<Label` render sites** in `src/**/*.tsx`; 19 are wired to a control via `htmlFor` or a form context, **~29 are not** — and those are siblings, not wrappers, so they are implicitly unassociated. Concentrated in `pages/data-analysis/AnalysisBuilder.tsx` (10 of 13 unwired), `pages/data-analysis/LandingView.tsx` (8 of 8), `pages/data-analysis/VariableSelect.tsx` (2), `pages/ml.tsx` (2), `pages/validation.tsx` (3), `pages/theme-manager.tsx` (3), `pages/record-definition-edit.tsx` (1). The wired helpers are `components/field-row.tsx:74` and `components/ui/form-field.tsx:49` (both `htmlFor`). **This was reported as "53 unlabelled Labels" and is not fixed.** |
+> | Nested interactive elements — saved-view menu | **FIXED** | `components/records-toolbar.tsx:145-186`. Each item was a `DropdownMenuItem` wrapping two `<button>`s (apply + delete), unreachable by keyboard because Radix menus trap Tab and activate with Enter/Space via `onSelect`. The item is now the apply action; delete moved into a `DropdownMenuSub`. |
+> | Nested interactive elements — notification menu | **FIXED** | `components/notification-bell.tsx:75-104`. Navigation is driven from `onSelect` with `e.preventDefault()` and `useDesktopNav`/`navigate`, not from a nested `<Link>`'s `onClick`. The "mark all" button also sets `onSelect={(e) => e.preventDefault()}`. |
+> | `<button>` wrapping the select-all checkbox | **FIXED** | `components/ui/data-table.tsx:302-309`. The `select` column header previously rendered the checkbox inside the sort `<button>`, producing `<button><button role="checkbox">` — invalid nesting and two tab stops. The select column now renders the header in a plain `<span>`. |
+> | No `aria-sort` | **FIXED** | `components/ui/data-table.tsx:287-295`. Set on the `<th>` (a column property), not on the inner sort button, which previously only changed `aria-label`. Values: `ascending` / `descending` / `none` / absent when unsortable. |
+> | No `aria-rowcount` / `aria-rowindex` | **FIXED** | `components/ui/data-table.tsx:270` (`aria-rowcount={rows.length + 1}`), `:275` (header `aria-rowindex={1}`), `:373` (`aria-rowindex={vr.index + 2}` for virtual rows). Also `aria-colcount`. |
+>
+> ### Focus management
+>
+> | Item | Status | Evidence |
+> |---|---|---|
+> | No focus management on route change | **FIXED** | `components/layout.tsx:71-90` (`useRouteFocus`, called at `:101`) moves focus to `#main-content` on route change, skipping the first render and collapsing in-record navigation (`/patients/123` → `/patients/124`) so focus is not yanked away from the button the user just pressed. Focus moves inside a `requestAnimationFrame`. |
+> | Skip-to-content target focus styling | **FIXED** | `components/skip-to-content.tsx:20` uses `focus:ring-2 focus:ring-ring focus:ring-offset-2` alongside `focus:not-sr-only`. |
+> | Duplicate `#main-content` ids in the desktop shell | **FIXED** | `components/desktop/Desktop.tsx:166-174` keeps the id only on the focused window's `<main>` and demotes the rest to `main-content-inactive`. |
+> | Product tour 14/14 broken | **FIXED** | `hooks/use-product-tour.ts:32-46` replaced `a[href="/…"]` selectors with `[data-tour="<key>"]` (the sidebar renders `<button>`s, so the old selectors never matched and every step silently degraded to a context-free card). Anchors now exist in all three shells: `components/desktop/Dock.tsx:116,215` (`TOUR_KEY` map at `:18-29`), `components/layout.tsx:209`, `components/sidebar/AppSidebar.tsx:184`, plus `notification-bell.tsx:42`, `theme-toggle.tsx:32`, `AppSidebar.tsx:315`, `language-switcher.tsx:21`. A step whose target is absent from the DOM is **dropped** rather than rendered. |
+> | ErrorBoundary does not announce the crash | **FIXED** | `components/ErrorBoundary.tsx:66` — the fallback carries `role="alert"`. |
+> | OtpVerification does not move focus to the success heading (§5) | **STILL VALID** | `components/auth/OtpVerification.tsx:108` — the auto-advance effect returns early for `status === "verifying" \|\| status === "success"`, and there is no heading ref / `.focus()` on the success transition. All `.focus()` calls in the file target the OTP inputs. |
+| OtpVerification heading level is a hardcoded `<h2>` (§2) | **STILL VALID** | No `headingLevel` prop was added. Low impact — the current usage is correct everywhere it ships. |
+>
+> ### CI gate
+>
+> | Item | Status | Evidence |
+> |---|---|---|
+> | Page-level axe not in CI | **FIXED** | `.github/workflows/a11y.yml` (new, untracked in git at the time of writing) runs `@axe-core/playwright` over both shells via a matrix (`shell: [classic, desktop]`) against `tests/a11y-pages/`. Only `serious` and `critical` violations block. |
+> | The a11y gate can self-disable | **FIXED** | Previously `test.skip()`ed when the app redirected to `/login` or when the dock was missing, so a broken auth boundary or a desktop-shell regression could never fail CI. Now both specs **hard-fail** (`tests/a11y-pages/a11y-pages-classic.spec.ts:48-59`, `a11y-pages-desktop.spec.ts:29-51`), authenticated routes are given a mocked session via `GET /api/auth/me` rather than a `localStorage` token nothing reads, and the workflow itself exits 1 if `tests/a11y-pages` is missing. |
+>
+> ### Still open
+>
+> - ~29 unassociated `<Label>` elements (see above).
+> - `aria-describedby` on ad-hoc fields — unchanged; `<FormField>` handles the description slot but hand-rolled fields do not.
+> - `<CommandPalette>` focus restoration on close — still needs a manual pass.
+> - Light `--destructive` white-label contrast (3.78:1).
+> - No page-level axe coverage for the **mockup-sandbox** SPA; the workflow only builds `artifacts/research-data`.
+> - No screen-reader smoke in CI. The methodology in §4 is still manual-only.
+
+---
+
+Original audit, unchanged from 2026-09-07:
+
 This is a *snapshot* audit. The automated tests run in CI on every push; this document is the human-readable write-up of the methodology, the patterns that were found, and the remediation rules the team has agreed to follow going forward.
 
 ## Methodology

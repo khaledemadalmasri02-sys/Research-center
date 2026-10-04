@@ -24,7 +24,7 @@ Static Assets layer, including the single-page-application fallback to `index.ht
 - `GET /api/patients/stats` · `GET /api/patients/collection-stats`
 - `GET /api/db/tables` · `GET /api/db/:table` (Database viewer)
 - `POST /api/storage/uploads/request-url` · `POST /api/storage/upload-file`
-- `GET  /api/storage/objects/*` (auth) · `GET /api/storage/public-objects/*`
+- `GET  /api/storage/objects/*` (auth) · ~~`GET /api/storage/public-objects/*`~~ **retired 2026-10** — it had no auth middleware and resolved the whole bucket from an attacker-controlled path, serving `backups/*.sql`; it now requires auth + admin and returns `410 Gone`
 - `POST /api/voice/transcribe` (requires `GROQ_API_KEY`)
 
 ## One-time production setup
