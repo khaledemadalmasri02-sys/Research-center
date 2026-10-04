@@ -36,32 +36,32 @@ packages:
 
 catalog:
   "@tailwindcss/vite": ^4.1.14
-  "@tanstack/react-query": ^5.90.21
+  "@tanstack/react-query": ^5.104.0
   "@tanstack/react-table": ^8.21.3
-  "@tanstack/react-virtual": ^3.13.12
+  "@tanstack/react-virtual": ^3.14.13
   "@types/node": ^25.3.3
   "@types/pg": ^8.6.0
-  "@types/react": ^19.2.0
-  "@types/react-dom": ^19.2.0
+  "@types/react": ^19.3.0
+  "@types/react-dom": ^19.3.0
   "@vitejs/plugin-react": ^5.0.4
   class-variance-authority: ^0.7.1
   clsx: ^2.1.1
-  drizzle-orm: ^0.45.1
+  drizzle-orm: ^0.45.3
   framer-motion: ^12.23.24
   lucide-react: ^0.545.0
-  "@aws-sdk/client-s3": ^3.600.0
-  "@aws-sdk/s3-request-presigner": ^3.600.0
-  "@aws-sdk/credential-providers": ^3.300.0
+  "@aws-sdk/client-s3": ^3.1144.0
+  "@aws-sdk/s3-request-presigner": ^3.1144.0
+  "@aws-sdk/credential-providers": ^3.1144.0
   # Must be this exact version because expo requires it
-  react: 19.1.0
+  react: 19.3.0
   # Must be this exact version because expo requires it
-  react-dom: 19.1.0
-  tailwind-merge: ^3.3.1
+  react-dom: 19.3.0
+  tailwind-merge: ^3.7.0
   tailwindcss: ^4.1.14
-  tsx: ^4.23.0
+  tsx: ^4.23.15
   vite: ^7.3.6
   vitest: ^2.1.9
-  zod: ^4.4.3
+  zod: ^4.6.5
 
 autoInstallPeers: false
 
