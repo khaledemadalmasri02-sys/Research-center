@@ -6,6 +6,27 @@ vi.mock("../src/lib/security", () => ({
   getAuthUser: vi.fn(),
   isAdmin: (u: any) => !!u?.canAdminAccess,
   canEdit: (u: any) => !!u && (u.canAdminAccess || u.role === "editor" || u.role === "admin"),
+  requirePatientScope: (_c: any, u: any) =>
+    !!u && (u.canAdminAccess || u.role === "editor" || u.role === "admin")
+      ? null
+      : new Response("Forbidden", { status: 403 }),
+  loadScopedRecord: async (c: any, recordId: number, user: any) => {
+    const admin = !!user?.canAdminAccess;
+    const stmt = admin
+      ? c.env.DB.prepare("SELECT * FROM records WHERE id = ?").bind(recordId)
+      : c.env.DB
+          .prepare("SELECT * FROM records WHERE id = ? AND user_id = ?")
+          .bind(recordId, user?.id ?? -1);
+    const rec = await stmt.first();
+    if (!rec) return null;
+    let data: any = {};
+    try {
+      data = typeof rec.data === "string" ? JSON.parse(rec.data) : rec.data;
+    } catch {
+      data = {};
+    }
+    return { id: rec.id, data };
+  },
   writeAudit: vi.fn(),
   hashPassword: (p: string) => p,
   verifyPassword: () => true,
@@ -72,7 +93,10 @@ describe("studies routes", () => {
       if (sql.startsWith("SELECT * FROM studies")) {
         return { results: [{ id: 1, code: "ST1", title: "Stroke", irb_number: null, status: "active", enrollment_target: 100 }] };
       }
-      if (sql.includes("FROM sites GROUP BY study_id")) {
+      // The sites aggregate is now a bounded subquery:
+      //   SELECT ... FROM (SELECT study_id, enrollment_count FROM sites
+      //                    ORDER BY id LIMIT ?) GROUP BY study_id
+      if (sql.includes("FROM sites ORDER BY id LIMIT ?")) {
         return { results: [{ study_id: 1, enrolled: 30, site_count: 2 }] };
       }
       return { results: [] };

@@ -7,6 +7,7 @@ interface EmailAttachment {
   contentId?: string;
 }
 
+import { createHmac } from "node:crypto";
 import { checkUnsubscribed } from "./unsubscribeGuard";
 
 export interface EmailInput {
@@ -29,6 +30,36 @@ const DEFAULT_REPLY_TO = "support@research-center.fit";
 const DEFAULT_FROM_NAME = "Research Center";
 const UNSUBSCRIBE_BASE = process.env.MAIL_UNSUBSCRIBE_URL ?? "https://research-center.fit/unsubscribe";
 
+/**
+ * Shared secret for unsubscribe links. Must be identical on both sides:
+ * `research/src/routes/unsubscribe.ts` verifies with `UNSUBSCRIBE_TOKEN`,
+ * falling back to `INBOUND_EMAIL_SECRET` then `SESSION_SECRET`. The Worker
+ * FAILS CLOSED (403) when it has no token configured, so a link minted
+ * without a matching secret is permanently unusable.
+ */
+function unsubscribeSecret(): string | null {
+  const raw =
+    process.env.UNSUBSCRIBE_TOKEN ??
+    process.env.INBOUND_EMAIL_SECRET ??
+    process.env.SESSION_SECRET;
+  return typeof raw === "string" && raw.trim() ? raw : null;
+}
+
+/**
+ * Per-address HMAC that proves the mail owner controls the address.
+ * Must match `mintUnsubscribeToken` in research/src/routes/unsubscribe.ts
+ * byte for byte: HMAC-SHA256(secret, `<lowercased email>|<category>`) hex,
+ * truncated to 32 chars.
+ */
+export function mintUnsubscribeToken(email: string, category: string): string | null {
+  const secret = unsubscribeSecret();
+  if (!secret) return null;
+  return createHmac("sha256", secret)
+    .update(`${email.toLowerCase()}|${category}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
 function resolveFrom(input: EmailInput): { address: string; name: string } {
   const address = input.from ?? process.env.SMTP_FROM ?? process.env.MAIL_FROM ?? DEFAULT_FROM;
   const name = process.env.MAIL_FROM_NAME ?? DEFAULT_FROM_NAME;
@@ -39,9 +70,24 @@ function resolveReplyTo(input: EmailInput): string | undefined {
   return input.replyTo ?? process.env.MAIL_REPLY_TO ?? DEFAULT_REPLY_TO;
 }
 
+export function buildUnsubscribeUrl(recipient: string, category?: string): string {
+  // The Worker normalises before verifying: email is trimmed + lowercased
+  // (and rejected if it is not an address) and a missing category becomes
+  // "all". Mint over the SAME normalised values or every link is rejected.
+  const email = recipient.trim().toLowerCase();
+  const normalizedCategory = (category || "all").trim().toLowerCase();
+  // Without the token the Worker rejects the request (it verifies the HMAC on
+  // both GET and POST), so an untokened link is a dead link.
+  const token = mintUnsubscribeToken(email, normalizedCategory);
+  const tokenParam = token ? `&token=${encodeURIComponent(token)}` : "";
+  const categoryParam =
+    normalizedCategory === "all" ? "" : `&category=${encodeURIComponent(normalizedCategory)}`;
+  return `${UNSUBSCRIBE_BASE}?email=${encodeURIComponent(email)}${categoryParam}${tokenParam}`;
+}
+
 function buildHeaders(input: EmailInput): Record<string, string> {
   const recipient = Array.isArray(input.to) ? input.to[0] : input.to;
-  const unsubUrl = `${UNSUBSCRIBE_BASE}?email=${encodeURIComponent(recipient ?? "")}${input.category ? `&category=${encodeURIComponent(input.category)}` : ""}`;
+  const unsubUrl = buildUnsubscribeUrl(recipient ?? "", input.category);
   return {
     "List-Unsubscribe": `<${unsubUrl}>, <mailto:${DEFAULT_REPLY_TO}?subject=unsubscribe>`,
     "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

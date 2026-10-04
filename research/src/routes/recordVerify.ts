@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import type { AppBindings, AppVariables, AppContext } from "../lib/env";
-import { getAuthUser, canEdit, writeAudit } from "../lib/security";
+import {
+  getAuthUser,
+  canEdit,
+  writeAudit,
+  loadScopedRecord,
+} from "../lib/security";
 
 function parseJson(value: any): Record<string, any> {
   if (value && typeof value === "object") return value as Record<string, any>;
@@ -40,7 +45,10 @@ recordVerifyApp.post("/:recordId", async (c: AppContext) => {
     return c.json({ error: "secondData object is required." }, 400);
 
   const db = c.env.DB;
-  const record = await db.prepare("SELECT * FROM records WHERE id = ?").bind(recordId).first<any>();
+  // IDOR fix: this read had no owner check, so any editor could snapshot or
+  // verify — and therefore read the full `data` JSON of — any other user's
+  // record by guessing its id. Same scoping as routes/export.ts.
+  const record = await loadScopedRecord(c, recordId, auth.user);
   if (!record) return c.json({ error: "Record not found." }, 404);
 
   const primary = parseJson(record.data);
@@ -92,7 +100,7 @@ recordVerifyApp.get("/queue", async (c: AppContext) => {
   const rows = await c.env.DB.prepare(
     `SELECT id, record_id as recordId, second_user_id as secondUserId,
             status, conflict_fields as conflictFields, concordance, created_at as createdAt
-       FROM record_verifications WHERE status = 'conflict' ORDER BY created_at DESC`
+       FROM record_verifications WHERE status = 'conflict' ORDER BY created_at DESC LIMIT 200`
   ).all<any>();
   return c.json({ queue: rows.results || [] });
 });

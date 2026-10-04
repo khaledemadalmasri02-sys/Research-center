@@ -5,6 +5,7 @@ import {
   isAdmin,
   canEdit,
   writeAudit,
+  requirePatientScope,
 } from "../lib/security";
 
 export const consentApp = new Hono<{
@@ -65,17 +66,38 @@ consentApp.post("/versions", async (c: AppContext) => {
 });
 
 // GET /api/consent — list consents (optionally filtered by patientId)
+//
+// IDOR fix: `patientId` was optional and, when absent, the route returned
+// EVERY consent in the table — the signed/withdrawn state of every patient in
+// the study — to any authenticated user including a `viewer`. Consent records
+// are themselves PHI (they reveal that a named person participated in a study).
+//
+// Scoping is by `signed_by_user_id`, a real column on `consents`: an admin sees
+// everything, anyone else sees only the consents they signed. A viewer with no
+// consents gets an empty list, not the roster.
 consentApp.get("/", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
+  const denied = requirePatientScope(c, auth.user);
+  if (denied) return denied;
 
   const db = c.env.DB;
   const patientId = c.req.query("patientId");
-  const clauses = ["1=1"];
-  const binds: any[] = [];
-  if (patientId) {
-    clauses.push("c.patient_id = ?");
-    binds.push(parseInt(patientId, 10));
+  if (!patientId) {
+    return c.json(
+      { error: "patientId is required. Listing every consent is not permitted." },
+      400
+    );
+  }
+  const parsed = parseInt(patientId, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return c.json({ error: "Invalid patientId" }, 400);
+  }
+  const clauses = ["c.patient_id = ?"];
+  const binds: any[] = [parsed];
+  if (!isAdmin(auth.user)) {
+    clauses.push("c.signed_by_user_id = ?");
+    binds.push(auth.user.id);
   }
   const rows = await db
     .prepare(
@@ -95,19 +117,35 @@ consentApp.get("/", async (c: AppContext) => {
 });
 
 // GET /api/consent/status?patientId= — whether a signed, non-withdrawn consent exists
+// Same owner scoping as GET /: non-admins only see consents they signed.
 consentApp.get("/status", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
+  const denied = requirePatientScope(c, auth.user);
+  if (denied) return denied;
   const patientId = c.req.query("patientId");
   if (!patientId) return c.json({ error: "patientId required" }, 400);
+  const parsed = parseInt(patientId, 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return c.json({ error: "Invalid patientId" }, 400);
+  }
 
-  const row = await c.env.DB.prepare(
-    `SELECT id FROM consents
-      WHERE patient_id = ? AND status = 'signed' AND withdrawn_at IS NULL
-      LIMIT 1`
-  )
-    .bind(parseInt(patientId, 10))
-    .first<any>();
+  const row = isAdmin(auth.user)
+    ? await c.env.DB.prepare(
+        `SELECT id FROM consents
+          WHERE patient_id = ? AND status = 'signed' AND withdrawn_at IS NULL
+          LIMIT 1`
+      )
+        .bind(parsed)
+        .first<any>()
+    : await c.env.DB.prepare(
+        `SELECT id FROM consents
+          WHERE patient_id = ? AND signed_by_user_id = ?
+            AND status = 'signed' AND withdrawn_at IS NULL
+          LIMIT 1`
+      )
+        .bind(parsed, auth.user.id)
+        .first<any>();
   return c.json({ hasValidConsent: !!row, consentId: row?.id ?? null });
 });
 
@@ -203,9 +241,11 @@ consentApp.post("/:id/withdraw", async (c: AppContext) => {
 consentApp.get("/protocols", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
-  const rows = await c.env.DB.prepare(
-    "SELECT id, code, title, irb_number, pi_name, status, created_at FROM study_protocols ORDER BY created_at DESC"
-  ).all<any>();
+  const rows = await c.env.DB
+    .prepare(
+      "SELECT id, code, title, irb_number, pi_name, status, created_at FROM study_protocols ORDER BY created_at DESC LIMIT 500"
+    )
+    .all<any>();
   return c.json({ protocols: rows.results || [] });
 });
 

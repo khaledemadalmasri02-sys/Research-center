@@ -8,6 +8,20 @@
       "when": 1788343095417,
       "tag": "0000_good_scarlet_spider",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789315758370,
+      "tag": "0001_wandering_bug",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791056054490,
+      "tag": "0002_auth_mfa_recovery",
+      "breakpoints": true
     }
   ]
 }

@@ -149,6 +149,45 @@ export interface GetObjectResult {
   status: number;
 }
 
+export interface DeleteObjectResult {
+  key: string;
+  deleted: boolean;
+  status: number;
+}
+
+// Delete an object. Added for the GDPR erasure path (routes/gdpr.ts): the
+// Erasure Request must remove the S3/MinIO copies of a patient's radiology
+// objects, not just the D1 rows that point at them. Returns `deleted: false`
+// for a 404 so the caller can distinguish "already gone" (idempotent success)
+// from "removed".
+export async function deleteObject(
+  config: S3Config,
+  key: string
+): Promise<DeleteObjectResult> {
+  const target = buildTarget(config, key);
+  const payloadHash = await sha256Hex("");
+  const amz = amzDate(new Date());
+  const { authorization } = await buildSignatureAsync(
+    config,
+    target,
+    "DELETE",
+    payloadHash,
+    amz
+  );
+
+  const headers: Record<string, string> = {
+    host: target.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amz.full,
+    authorization,
+  };
+
+  const res = await fetch(target.url, { method: "DELETE", headers });
+  // S3 answers 204 on delete; a repeat delete of a missing key is a 404, which
+  // for erasure purposes means the bytes are gone.
+  return { key, deleted: res.ok || res.status === 404, status: res.status };
+}
+
 export async function getObject(config: S3Config, key: string): Promise<GetObjectResult> {
   const target = buildTarget(config, key);
   const payloadHash = await sha256Hex("");

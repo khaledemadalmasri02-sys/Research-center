@@ -3,6 +3,7 @@ import multer from "multer";
 import OpenAI, { toFile } from "openai";
 import express from "express";
 import { validate, z } from "../lib/validate";
+import { requireAuth } from "./auth";
 
 const router = Router();
 
@@ -66,8 +67,11 @@ Respond ONLY with a JSON object in this exact format:
 If there are no corrections, return an empty array for "corrections".`;
 
 // ── Audio transcription via Groq Whisper Large V3 ─────────────────────────────
+// `requireAuth` is first so an unauthenticated caller never gets multer to
+// buffer a 25 MB upload before being rejected.
 router.post(
   "/voice/transcribe",
+  requireAuth,
   upload.single("audio"),
   validate({ query: TranscribeQuery }),
   async (req, res): Promise<void> => {
@@ -121,6 +125,7 @@ router.post(
 // ── Text-only medical correction (AI fallback — local dict preferred) ─────────
 router.post(
   "/voice/correct",
+  requireAuth,
   express.json(),
   validate({ body: CorrectBody }),
   async (req, res): Promise<void> => {

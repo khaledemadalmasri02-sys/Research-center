@@ -53,7 +53,7 @@ process.env.S3_SECRET_ACCESS_KEY ??= "minioadmin";
 // Ensure NODE_ENV is set so the app's production guard doesn't trip.
 process.env.NODE_ENV ??= "development";
 process.env.SESSION_SECRET ??= "test-secret";
-process.env.ALLOWED_ORIGINS ??= "http://localhost:3003,http://127.0.0.1:3003";
+process.env.ALLOWED_ORIGINS ??= "http://localhost:3003,http://localhost:4003,http://127.0.0.1:3003,http://127.0.0.1:4003";
 
 // Force the Node process to interpret date strings as UTC. The api-server
 // uses naive `timestamp` columns (no timezone) for `lockedUntil` etc., so

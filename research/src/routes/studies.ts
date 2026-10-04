@@ -11,8 +11,25 @@ export const studiesApp = new Hono<{
 studiesApp.get("/", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
-  const studies = await c.env.DB.prepare("SELECT * FROM studies ORDER BY created_at DESC").all<any>();
-  const sitesRows = await c.env.DB.prepare("SELECT study_id, SUM(enrollment_count) as enrolled, COUNT(*) as site_count FROM sites GROUP BY study_id").all<any>();
+  // Bounded: both queries were unbounded, and the `sites` GROUP BY scanned the
+  // whole sites table just to aggregate per study.
+  const limit = Math.min(
+    Math.max(parseInt(c.req.query("limit") || "100", 10) || 100, 1),
+    500
+  );
+  const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
+  const studies = await c.env.DB
+    .prepare("SELECT * FROM studies ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .bind(limit, offset)
+    .all<any>();
+  const sitesRows = await c.env.DB
+    .prepare(
+      `SELECT study_id, SUM(enrollment_count) as enrolled, COUNT(*) as site_count
+         FROM (SELECT study_id, enrollment_count FROM sites ORDER BY id LIMIT ?)
+        GROUP BY study_id`
+    )
+    .bind(10000)
+    .all<any>();
   const byStudy: Record<number, any> = {};
   for (const s of sitesRows.results || []) byStudy[s.study_id] = s;
   const list = (studies.results || []).map((st: any) => ({
@@ -25,7 +42,7 @@ studiesApp.get("/", async (c: AppContext) => {
     enrolled: byStudy[st.id]?.enrolled || 0,
     siteCount: byStudy[st.id]?.site_count || 0,
   }));
-  return c.json({ studies: list });
+  return c.json({ studies: list, limit, offset });
 });
 
 // POST /api/studies — create a study (editor+)
@@ -80,7 +97,10 @@ studiesApp.get("/:id/arms", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
   const studyId = parseInt(c.req.param("id") ?? "", 10);
-  const rows = await c.env.DB.prepare("SELECT * FROM study_arms WHERE study_id = ? ORDER BY id").bind(studyId).all<any>();
+  const rows = await c.env.DB
+    .prepare("SELECT * FROM study_arms WHERE study_id = ? ORDER BY id LIMIT 500")
+    .bind(studyId)
+    .all<any>();
   return c.json({ arms: (rows.results || []).map((r: any) => ({ id: r.id, name: r.name })) });
 });
 
@@ -133,7 +153,12 @@ studiesApp.get("/:id/dashboard", async (c: AppContext) => {
   const studyId = parseInt(c.req.param("id") ?? "", 10);
   const study = await c.env.DB.prepare("SELECT * FROM studies WHERE id = ?").bind(studyId).first<any>();
   if (!study) return c.json({ error: "Not found" }, 404);
-  const sites = await c.env.DB.prepare("SELECT id, name, country, enrollment_count FROM sites WHERE study_id = ? ORDER BY id").bind(studyId).all<any>();
+  const sites = await c.env.DB
+    .prepare(
+      "SELECT id, name, country, enrollment_count FROM sites WHERE study_id = ? ORDER BY id LIMIT 500"
+    )
+    .bind(studyId)
+    .all<any>();
   const total = (sites.results || []).reduce((acc: number, s: any) => acc + (s.enrollment_count || 0), 0);
   return c.json({
     study: { id: study.id, code: study.code, title: study.title, target: study.enrollment_target },

@@ -2,10 +2,11 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { sql } from "drizzle-orm";
 import { db, usersTable, recordsTable, feedbackTable, signupRequestsTable, notificationsTable } from "@workspace/db";
 import { requireAdmin } from "../middlewares/requireAdmin";
+import { requireAuth } from "./auth";
 
 const router: IRouter = Router();
 
-router.get("/metrics", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/metrics", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const [{ users }] = await db.select({ users: sql<number>`count(*)` }).from(usersTable);
   const [{ records }] = await db.select({ records: sql<number>`count(*)` }).from(recordsTable);
   const [{ feedback }] = await db.select({ feedback: sql<number>`count(*)` }).from(feedbackTable);

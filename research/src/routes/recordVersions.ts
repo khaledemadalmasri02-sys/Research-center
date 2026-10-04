@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import type { AppBindings, AppVariables, AppContext } from "../lib/env";
-import { getAuthUser, canEdit, writeAudit } from "../lib/security";
+import {
+  getAuthUser,
+  canEdit,
+  writeAudit,
+  loadScopedRecord,
+} from "../lib/security";
 
 function parseJson(value: any): Record<string, any> {
   if (value && typeof value === "object") return value as Record<string, any>;
@@ -53,7 +58,10 @@ recordVersionsApp.post("/:recordId/snapshot", async (c: AppContext) => {
   }
 
   const db = c.env.DB;
-  const record = await db.prepare("SELECT * FROM records WHERE id = ?").bind(recordId).first<any>();
+  // IDOR fix: this read had no owner check, so any editor could snapshot or
+  // verify — and therefore read the full `data` JSON of — any other user's
+  // record by guessing its id. Same scoping as routes/export.ts.
+  const record = await loadScopedRecord(c, recordId, auth.user);
   if (!record) return c.json({ error: "Record not found." }, 404);
 
   const maxRow = await db
@@ -98,7 +106,7 @@ recordVersionsApp.get("/:recordId", async (c: AppContext) => {
   const rows = await c.env.DB.prepare(
     `SELECT id, record_id as recordId, user_id as userId, version_no as versionNo,
             change_summary as changeSummary, created_at as createdAt
-       FROM record_versions WHERE record_id = ? ORDER BY version_no DESC`
+       FROM record_versions WHERE record_id = ? ORDER BY version_no DESC LIMIT 500`
   )
     .bind(recordId)
     .all<any>();

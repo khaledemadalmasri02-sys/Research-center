@@ -82,8 +82,17 @@ export function withDb() {
     // Truncate only tables that exist. The api-server's bootstrap creates
     // most of them; some (like `patients`) are managed by Drizzle migrations
     // and may not exist on a freshly-bootstrapped DB.
+    // NOTE: `patients` and `radiology_images` were missing here, so rows
+    // leaked from one test (and one test FILE, since the whole run shares one
+    // database) into the next. Because `withDb()` also resets the users id
+    // sequence, every file's first user gets id 1 again — so leaked patient
+    // rows from a different file were attributed to the current test's user
+    // and broke exact-count assertions. Delete the child tables before
+    // `users` (which cascades).
     const tables = [
       "session",
+      "radiology_images",
+      "patients",
       "users",
       "signup_requests",
       "audit_log",
@@ -95,8 +104,14 @@ export function withDb() {
       "saved_views",
       "notifications",
       "login_challenges",
+      "oauth_identities",
       "tour_config",
       "inbound_emails",
+      // Auth tables (MFA + password recovery). Listed BEFORE `users` because the
+      // FK cascades anyway, but explicit so a leaked recovery-code hash or reset
+      // token cannot survive into the next test and be spent by it.
+      "password_reset_tokens",
+      "mfa_recovery_codes",
     ];
     for (const t of tables) {
       await pool

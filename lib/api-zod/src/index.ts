@@ -11,5 +11,3 @@
 // And the inferred types are accessible as types:
 //   import type { CreatePatientBody } from "@workspace/api-zod";
 export * from "./generated/api";
-
-export * from './generated/api';

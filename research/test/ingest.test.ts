@@ -7,6 +7,27 @@ vi.mock("../src/lib/security", () => ({
   getAuthUser: vi.fn(),
   isAdmin: (u: any) => !!u?.canAdminAccess,
   canEdit: (u: any) => !!u && (u.canAdminAccess || u.role === "editor" || u.role === "admin"),
+  requirePatientScope: (_c: any, u: any) =>
+    !!u && (u.canAdminAccess || u.role === "editor" || u.role === "admin")
+      ? null
+      : new Response("Forbidden", { status: 403 }),
+  loadScopedRecord: async (c: any, recordId: number, user: any) => {
+    const admin = !!user?.canAdminAccess;
+    const stmt = admin
+      ? c.env.DB.prepare("SELECT * FROM records WHERE id = ?").bind(recordId)
+      : c.env.DB
+          .prepare("SELECT * FROM records WHERE id = ? AND user_id = ?")
+          .bind(recordId, user?.id ?? -1);
+    const rec = await stmt.first();
+    if (!rec) return null;
+    let data: any = {};
+    try {
+      data = typeof rec.data === "string" ? JSON.parse(rec.data) : rec.data;
+    } catch {
+      data = {};
+    }
+    return { id: rec.id, data };
+  },
   writeAudit: vi.fn(),
   hashPassword: (p: string) => p,
   verifyPassword: () => true,

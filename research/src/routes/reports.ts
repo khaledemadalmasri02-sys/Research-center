@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { AppBindings, AppVariables, AppContext } from "../lib/env";
-import { getAuthUser, writeAudit } from "../lib/security";
+import { getAuthUser, writeAudit, requirePatientScope } from "../lib/security";
 import { buildSimplePdf } from "../lib/pdf";
 
 export const reportsApp = new Hono<{
@@ -12,13 +12,22 @@ export const reportsApp = new Hono<{
 reportsApp.get("/patient/:id/pdf", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
+  // IDOR fix: the route took a patient id from the path and returned a CRF
+  // summarising that patient's consents, coded diagnoses and imaging for ANY
+  // authenticated user, i.e. `report/patient/1/pdf` … `/N/pdf` walked the whole
+  // roster. There is no owner column on `patients` (see requirePatientScope), so
+  // the role gate is the control until `patients.owner_user_id` exists.
+  const denied = requirePatientScope(c, auth.user);
+  if (denied) return denied;
   const patientId = parseInt(c.req.param("id") ?? "", 10);
-  if (!Number.isInteger(patientId)) return c.json({ error: "Invalid patient id" }, 400);
+  if (!Number.isInteger(patientId) || patientId <= 0) {
+    return c.json({ error: "Invalid patient id" }, 400);
+  }
 
   // Gather patient-scoped data across the research tables.
-  const consents = await c.env.DB.prepare("SELECT * FROM consents WHERE patient_id = ? ORDER BY id").bind(patientId).all<any>();
-  const codes = await c.env.DB.prepare("SELECT code_system, code, display FROM diagnosis_codes WHERE patient_id = ? ORDER BY id").bind(patientId).all<any>();
-  const images = await c.env.DB.prepare("SELECT modality, study_instance_uid, is_deidentified FROM dicom_images WHERE patient_id = ? ORDER BY id").bind(patientId).all<any>();
+  const consents = await c.env.DB.prepare("SELECT * FROM consents WHERE patient_id = ? ORDER BY id LIMIT 500").bind(patientId).all<any>();
+  const codes = await c.env.DB.prepare("SELECT code_system, code, display FROM diagnosis_codes WHERE patient_id = ? ORDER BY id LIMIT 500").bind(patientId).all<any>();
+  const images = await c.env.DB.prepare("SELECT modality, study_instance_uid, is_deidentified FROM dicom_images WHERE patient_id = ? ORDER BY id LIMIT 500").bind(patientId).all<any>();
 
   const lines: string[] = [];
   lines.push(`Patient ID: ${patientId}`);
@@ -35,7 +44,13 @@ reportsApp.get("/patient/:id/pdf", async (c: AppContext) => {
   lines.push("");
   lines.push(`DICOM images (${images.results?.length || 0}):`);
   for (const im of images.results || []) {
-    lines.push(`  - ${im.modality ?? "?"} ${im.study_instance_uid ?? "-"} ${im.is_deidentified ? "[deid]" : ""}`);
+    // `is_deidentified` is a TRI-STATE now (0 none / 1 metadata only /
+    // 2 fully de-identified). Only state 2 means the pixels are clean, so only
+    // state 2 gets a `[deid]` marker — previously ANY truthy value (including a
+    // metadata-only scrub) stamped `[deid]` and implied a safe image.
+    const state = Number(im.is_deidentified) || 0;
+    const marker = state === 2 ? "[deid]" : state === 1 ? "[metadata-only; PIXELS NOT SCRUBBED]" : "";
+    lines.push(`  - ${im.modality ?? "?"} ${im.study_instance_uid ?? "-"} ${marker}`);
   }
 
   const pdf = buildSimplePdf(lines, `Patient ${patientId} CRF`);
@@ -44,6 +59,8 @@ reportsApp.get("/patient/:id/pdf", async (c: AppContext) => {
     headers: {
       "Content-Type": "application/pdf",
       "Content-Disposition": `inline; filename="patient_${patientId}_crf.pdf"`,
+      // The report contains PHI: never let a shared cache store it.
+      "Cache-Control": "private, no-store",
     },
   });
 });

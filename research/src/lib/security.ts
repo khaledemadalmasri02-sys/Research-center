@@ -465,10 +465,32 @@ export function issueCsrfToken(c: AppContext): string {
   return token;
 }
 
+// Length-independent constant-time string comparison. `===` on secrets leaks
+// its length and the position of the first differing byte through timing, so
+// every secret comparison in this Worker goes through here.
+export function timingSafeEqual(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const ba = enc.encode(a);
+  const bb = enc.encode(b);
+  // Fold the length difference into the accumulator instead of returning early,
+  // so the number of iterations is a function of the *longer* input only.
+  const len = Math.max(ba.length, bb.length, 1);
+  let diff = ba.length ^ bb.length;
+  for (let i = 0; i < len; i++) {
+    diff |= (ba[i] ?? 0) ^ (bb[i] ?? 0);
+  }
+  return diff === 0;
+}
+
 // Hono middleware enforcing CSRF double-submit for state-changing requests that
 // are authenticated via session cookie (Bearer/API-token requests are exempt).
 export async function csrfGuard(c: AppContext, next: Next): Promise<Response | void> {
   const method = c.req.method.toUpperCase();
+  // NOTE: "safe" here means *side-effect free*. A GET that writes (e.g. the old
+  // `GET /api/deidentify/export`, which did `INSERT OR IGNORE INTO pseudonyms`
+  // for every patient) is a CSRF write primitive reachable from an `<img src>`
+  // on any origin — SameSite=Lax does not stop a top-level navigation. Such
+  // endpoints must be POST. Do not add one back.
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
     return next();
   }
@@ -480,9 +502,70 @@ export async function csrfGuard(c: AppContext, next: Next): Promise<Response | v
   // we don't use the `__Host-` prefix in this deployment.
   const cookieToken = getCookieVal(c, "csrf");
   const headerToken = c.req.header("x-csrf-token");
-  if (!cookieToken || !headerToken || cookieToken !== headerToken) {
+  if (!cookieToken || !headerToken) {
+    return c.json({ error: "CSRF token mismatch." }, 403);
+  }
+  if (!timingSafeEqual(cookieToken, headerToken)) {
     return c.json({ error: "CSRF token mismatch." }, 403);
   }
   return next();
+}
+
+// ---- Shared PHI scope helpers (W6) -----------------------------------------
+// D1 `records` rows carry an owner (`user_id`); `consents` rows carry the
+// signing user (`signed_by_user_id`). Both are real columns, so scoping by them
+// closes the record-level IDOR without inventing a tenancy model.
+//
+// `patients` (and everything hanging off it: dicom_images, diagnosis_codes,
+// radiology_images) has NO owner column at all — see the KNOWN ISSUE block in
+// src/index.ts. There is no correct owner-scoping query to write for those
+// tables until a `patients.owner_user_id` column exists (data-layer migration,
+// deliberately NOT performed here). In the interim the bulk/cross-patient PHI
+// readers require an edit-capable role via requirePatientScope().
+
+export async function loadScopedRecord(
+  c: AppContext,
+  recordId: number,
+  user: AuthUser | null
+): Promise<{ id: number; data: any } | null> {
+  // Admins may read any record; everyone else only their own. Binding the
+  // user id (rather than filtering in JS) means an unauthorised record simply
+  // does not exist from the caller's point of view — a 404, not a 403, so the
+  // endpoint cannot be used to enumerate which record ids exist.
+  const admin = isAdmin(user);
+  const stmt = admin
+    ? c.env.DB.prepare("SELECT * FROM records WHERE id = ?").bind(recordId)
+    : c.env.DB
+        .prepare("SELECT * FROM records WHERE id = ? AND user_id = ?")
+        .bind(recordId, user?.id ?? -1);
+  const rec = (await stmt.first<any>()) as any;
+  if (!rec) return null;
+  let data: any = {};
+  try {
+    data = typeof rec.data === "string" ? JSON.parse(rec.data) : rec.data;
+  } catch {
+    data = {};
+  }
+  return { id: rec.id, data };
+}
+
+// Gate for patient-scoped D1 PHI readers. Admins and edit-capable users pass.
+// Viewers are denied: `patients` has no owner column, so there is no way to
+// prove a viewer is entitled to a specific patient's imaging/codings, and
+// "authenticated" is not evidence of entitlement.
+export function requirePatientScope(
+  c: AppContext,
+  user: AuthUser | null
+): Response | null {
+  if (!user) return c.json({ error: "Unauthorized" }, 401);
+  if (canEdit(user)) return null;
+  return c.json(
+    {
+      error:
+        "Forbidden: patient-scoped PHI requires editor access. Per-patient " +
+        "ownership scoping is not yet implemented (patients has no owner column).",
+    },
+    403
+  );
 }
 

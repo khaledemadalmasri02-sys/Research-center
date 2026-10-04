@@ -5,9 +5,55 @@ import connectPgSimple from "connect-pg-simple";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { sessionCookieMaxAgeMs } from "./lib/session";
 import { pool } from "@workspace/db";
 
 const PgSession = connectPgSimple(session);
+
+/**
+ * A12: dedicated pool for the express-session store.
+ *
+ * This store used to share `@workspace/db`'s pool, whose pg default is
+ * `max: 10`. Every authenticated request reads the session (and writes it back
+ * at the end), so a modest burst of traffic could hold every connection and
+ * starve the API queries on the same pool. A small, separate pool with a short
+ * statement timeout guarantees session lookups can never block — or be
+ * blocked by — an API query.
+ *
+ * The config below is a plain `pg.Pool` config. `pg` is not a direct
+ * dependency of this package (pnpm's strict node_modules layout means the
+ * `@workspace/db` pool is the only reachable pg.Pool instance), so the class
+ * is taken from that instance's constructor rather than importing "pg" here.
+ * `@workspace/db` remains the single place where pool sizing is documented and
+ * env-overridable (see lib/db/src/index.ts); keep the two in sync.
+ *
+ *   DATABASE_SESSION_POOL_MAX                    [5]
+ *   DATABASE_SESSION_STATEMENT_TIMEOUT_MS        [5000]
+ *   DATABASE_SESSION_POOL_IDLE_TIMEOUT_MS        [30000]  (falls back to DATABASE_POOL_IDLE_TIMEOUT_MS)
+ *   DATABASE_POOL_CONNECTION_TIMEOUT_MS          [10000]  (shared with the API pool)
+ */
+function intEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const PoolCtor = pool.constructor as unknown as new (
+  config: Record<string, unknown>,
+) => typeof pool;
+
+const sessionPool = new PoolCtor({
+  connectionString: process.env.DATABASE_URL,
+  max: intEnv("DATABASE_SESSION_POOL_MAX", 5),
+  idleTimeoutMillis: intEnv(
+    "DATABASE_SESSION_POOL_IDLE_TIMEOUT_MS",
+    intEnv("DATABASE_POOL_IDLE_TIMEOUT_MS", 30_000),
+  ),
+  connectionTimeoutMillis: intEnv("DATABASE_POOL_CONNECTION_TIMEOUT_MS", 10_000),
+  statement_timeout: intEnv("DATABASE_SESSION_STATEMENT_TIMEOUT_MS", 5_000),
+  application_name: "api-server-sessions",
+});
 
 const app: Express = express();
 
@@ -157,23 +203,38 @@ if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
 }
 
 // ---- Session cookie hardening (P1.7) ---------------------------------------
-// `SameSite=Lax` is the new default. The api-server now only ever sees
-// same-origin requests (the Cloudflare Worker rewrites `Origin` to the
-// api-server's own base URL before forwarding, see
-// research/src/index.ts:proxyToBackend), so we no longer need `SameSite=None`
-// for the cross-origin SPA case. `Lax` keeps the cookie attached on
-// top-level navigations and on same-site requests, which is what we
-// want for a session — and what stops a malicious site from triggering
-// a state-changing request with the cookie attached.
+// `SameSite=Lax` is the default, and the protection it provides here is the
+// CSRF-shaped guard plus the Origin allow-list above — not the Worker's header
+// rewriting.
 //
-// Admin deployments can opt into `SameSite=Strict` via
-// SESSION_COOKIE_SAMESITE to defend against the subdomain phishing
-// case (admin opens a malicious page on a sibling subdomain). The
-// `__Host-` cookie-name prefix is not used here because the cookie
-// needs to share between apex and `www.` (the Worker serves both as
-// canonical), and the `__Host-` prefix forbids the `Domain` attribute
-// that sharing requires. We rely on SameSite + the Origin guard
-// (above) + Secure for protection.
+// CORRECTION (this comment used to state the opposite of the design): it said
+// the Cloudflare Worker "rewrites `Origin` to the api-server's own base URL
+// before forwarding", and used that to justify `Lax`. research/src/index.ts no
+// longer does that — `proxyToBackend` now FORWARDS the client's `Origin`
+// unchanged and rejects any request whose `Origin` host is not canonical, and
+// deleting a present-but-non-canonical Origin was removed. So the api-server
+// really does see the browser's Origin for production traffic, and its own
+// allow-list check (the `cors()` origin callback and the explicit
+// state-changing-request guard) is a live control, not a defence against
+// nothing. Masking `Origin` would in fact have DEFEATED that control, because
+// the api-server would then have no way to tell a same-origin request from a
+// hostile one.
+//
+// So the actual posture is:
+//   1. `SameSite=Lax` — the cookie is not attached to a cross-site subresource
+//      or form POST, so an attacker site cannot drive an authenticated write.
+//   2. Origin allow-list — every non-GET/HEAD request whose Origin is not
+//      allow-listed (and is not this host) is refused with 403. This is the
+//      control the Worker previously masked, and it now works.
+//   3. `Secure` — production sets it, so the cookie never crosses plaintext.
+//
+// Admin deployments can opt into `SameSite=Strict` via SESSION_COOKIE_SAMESITE
+// to defend against the subdomain phishing case (admin opens a malicious page on
+// a sibling subdomain). The `__Host-` cookie-name prefix is not used here
+// because the cookie needs to share between apex and `www.` (the Worker serves
+// both as canonical), and the `__Host-` prefix forbids the `Domain` attribute
+// that sharing requires. We rely on SameSite + the Origin guard (above) + Secure
+// for protection.
 const sessionSameSite = ((): "lax" | "strict" | "none" => {
   const v = (process.env.SESSION_COOKIE_SAMESITE ?? "lax").toLowerCase();
   if (v === "strict" || v === "none") return v;
@@ -190,12 +251,21 @@ app.use(
     // clean session cookie.
     name: "rc_sid",
     store: new PgSession({
-      pool,
+      // A12: the session store gets its OWN small pool instead of sharing the
+      // API pool. Sharing meant session reads/writes (one per authenticated
+      // request) competed with API queries for pg's default 10 connections,
+      // so a burst of traffic could starve the API of connections entirely.
+      pool: sessionPool,
       createTableIfMissing: false, // table is created at startup in index.ts
     }),
     secret: process.env.SESSION_SECRET ?? "dev-secret-change-me",
     resave: false,
     saveUninitialized: false,
+    // Re-issue the cookie on every authenticated response so its Max-Age tracks
+    // the sliding idle window server-side (lib/session.ts slides
+    // `lastActivityAt` on each authenticated request, which marks the session
+    // dirty and makes express-session rewrite the row).
+    rolling: true,
     cookie: {
       httpOnly: true,
       // Secure whenever the request is HTTPS. We trust the `X-Forwarded-Proto`
@@ -209,7 +279,12 @@ app.use(
         process.env.SESSION_COOKIE_DOMAIN ||
         (isProduction ? ".research-center.fit" : undefined),
       path: "/",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      // Was a flat 7 days. Now the IDLE window (30 min by default,
+      // SESSION_IDLE_TIMEOUT_MS), because the server enforces an idle timeout
+      // and a 12 h absolute cap (SESSION_ABSOLUTE_TIMEOUT_MS) on every
+      // authenticated request — a cookie that outlived those bounds would just
+      // be a stale credential sitting in a browser on a shared workstation.
+      maxAge: sessionCookieMaxAgeMs(),
     },
   }),
 );

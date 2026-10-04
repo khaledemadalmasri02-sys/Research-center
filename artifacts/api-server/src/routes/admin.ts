@@ -2,10 +2,15 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { desc, eq, sql } from "drizzle-orm";
 import { db, usersTable, signupRequestsTable, recordDefinitionsTable, recordsTable } from "@workspace/db";
 import { hashPassword, isValidPassword } from "../lib/security";
+import { establishSession } from "../lib/session";
 import { requireAdmin } from "../middlewares/requireAdmin";
+// `requireAuth` precedes `requireAdmin` on every route here so an
+// unauthenticated caller gets 401 Unauthorized, not 403 Admin access required.
+import { requireAuth } from "./auth";
 import { writeAudit, clientIp } from "../lib/audit";
 import { notify } from "../lib/notifications";
 import { sendEmail } from "../lib/email";
+import { logger } from "../lib/logger";
 import { validate, z } from "../lib/validate";
 
 const router: IRouter = Router();
@@ -27,11 +32,19 @@ const UpdateUserBody = z
     role: z.enum(["admin", "editor", "viewer"]).optional(),
     canAdminAccess: z.boolean().optional(),
     status: z.enum(["active", "pending", "suspended"]).optional(),
+    // Admin-set per-user MFA requirement. Turning it ON is deliberately not a
+    // lockout: an account that has not enrolled can still sign in and gets
+    // `mfaEnrollmentRequired: true` from /auth/me and from /auth/login so the
+    // SPA can prompt for enrolment. See the rollout note in the report.
+    mfaRequired: z.boolean().optional(),
   })
   .refine(
     (v) =>
-      v.role !== undefined || v.canAdminAccess !== undefined || v.status !== undefined,
-    { message: "At least one of role, canAdminAccess, status must be provided" },
+      v.role !== undefined ||
+      v.canAdminAccess !== undefined ||
+      v.status !== undefined ||
+      v.mfaRequired !== undefined,
+    { message: "At least one of role, canAdminAccess, status, mfaRequired must be provided" },
   );
 
 function isUniqueViolation(e: unknown): boolean {
@@ -41,7 +54,7 @@ function isUniqueViolation(e: unknown): boolean {
 // List sign-up requests awaiting admin approval (admin only). Only requests whose
 // email has been verified via OTP ("pending") are shown; unverified ("unverified")
 // rows are not yet real approval requests.
-router.get("/signups", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/signups", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const requests = await db
     .select()
     .from(signupRequestsTable)
@@ -53,6 +66,7 @@ router.get("/signups", requireAdmin, async (_req: Request, res: Response) => {
 // Approve a sign-up request -> creates a website-only user account
 router.post(
   "/signups/:id/approve",
+  requireAuth,
   requireAdmin,
   validate({ params: SignupIdParams }),
   async (req: Request, res: Response) => {
@@ -140,6 +154,7 @@ router.post(
 // Reject a sign-up request
 router.post(
   "/signups/:id/reject",
+  requireAuth,
   requireAdmin,
   validate({ params: SignupIdParams }),
   async (req: Request, res: Response) => {
@@ -173,14 +188,16 @@ router.post(
       to: request.email,
       subject: "Your MedResearch sign-up request",
       text: `Hi ${request.username}, your sign-up request was reviewed and unfortunately was not approved at this time.`,
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      logger.error({ err, userId: req.session.userId, email: request.email }, "Failed to send rejection email");
+    });
   }
 
   res.json({ ok: true });
 });
 
 // List users (admin only)
-router.get("/users", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/users", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const users = await db
     .select({
       id: usersTable.id,
@@ -190,16 +207,28 @@ router.get("/users", requireAdmin, async (_req: Request, res: Response) => {
       role: usersTable.role,
       canAdminAccess: usersTable.canAdminAccess,
       status: usersTable.status,
+      // MFA state, so an admin can see who has actually complied with an
+      // `mfaRequired` flag without cross-referencing another call. The sealed
+      // secret itself is never selected.
+      mfaEnabled: usersTable.totpEnabledAt,
+      mfaRequired: usersTable.mfaRequired,
       createdAt: usersTable.createdAt,
     })
     .from(usersTable)
     .orderBy(desc(usersTable.createdAt));
-  res.json({ users });
+  res.json({
+    users: users.map((u) => ({
+      ...u,
+      mfaEnabled: Boolean(u.mfaEnabled),
+      totpEnabledAt: u.mfaEnabled,
+    })),
+  });
 });
 
 // Admin directly creates a user (e.g. another admin)
 router.post(
   "/users",
+  requireAuth,
   requireAdmin,
   validate({ body: CreateUserBody }),
   async (req: Request, res: Response) => {
@@ -270,11 +299,13 @@ router.post(
 // Update a user (role, admin access, status)
 router.patch(
   "/users/:id",
+  requireAuth,
   requireAdmin,
   validate({ params: UserIdParams, body: UpdateUserBody }),
   async (req: Request, res: Response) => {
     const { id } = req.validated!.params as z.infer<typeof UserIdParams>;
-    const { role, canAdminAccess, status } = req.validated!.body as z.infer<typeof UpdateUserBody>;
+    const { role, canAdminAccess, status, mfaRequired } =
+      req.validated!.body as z.infer<typeof UpdateUserBody>;
 
     const [target] = await db.select().from(usersTable).where(eq(usersTable.id, id)).limit(1);
     if (!target) {
@@ -302,6 +333,7 @@ router.patch(
   if (role !== undefined) updateData.role = role;
   if (canAdminAccess !== undefined) updateData.canAdminAccess = role === "admin" ? canAdminAccess : false;
   if (status !== undefined) updateData.status = status;
+  if (mfaRequired !== undefined) updateData.mfaRequired = mfaRequired;
 
   const [updated] = await db
     .update(usersTable)
@@ -324,12 +356,26 @@ router.patch(
     ip: clientIp(req),
   });
 
+  // A7: when an admin changes their OWN privileges, rotate the session id so
+  // the session that was captured before the change can never be replayed as
+  // the post-change session (same reasoning as a login). The old session row
+  // is destroyed by regenerate().
+  if (req.session.userId !== undefined && req.session.userId === updated?.id) {
+    await establishSession(req, {
+      id: updated.id,
+      username: updated.username,
+      role: updated.role,
+      canAdminAccess: updated.canAdminAccess,
+    });
+  }
+
   res.json({ ok: true, user: updated });
 });
 
 // Delete a user (cannot delete self or the last admin)
 router.delete(
   "/users/:id",
+  requireAuth,
   requireAdmin,
   validate({ params: UserIdParams }),
   async (req: Request, res: Response) => {
@@ -371,6 +417,7 @@ router.delete(
 // own/created, and a sample of their records.
 router.get(
   "/users/:id/data",
+  requireAuth,
   requireAdmin,
   validate({ params: UserIdParams }),
   async (req: Request, res: Response) => {

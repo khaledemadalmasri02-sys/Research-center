@@ -114,16 +114,30 @@ describe("P2.9 — /api/patients", () => {
 
   it("returns 400 with structured issues when the create body is invalid", async () => {
     const agent = await t.loginAs("alice", "CorrectHorse42");
-    // Missing required patientId + patientName
+    // `age` is typed number|nullish; a string is a type error.
     const res = await agent
       .post("/api/patients")
       .send({ age: "not-a-number" });
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation failed");
     expect(Array.isArray(res.body.issues)).toBe(true);
-    const paths = res.body.issues.map((i: { path: string }) => i.path);
-    // Both required fields should appear in the issues list.
-    expect(paths).toEqual(expect.arrayContaining(["patientId", "patientName"]));
+    const issues = res.body.issues as Array<{ source: string; path: string; message: string }>;
+    // `patientId` / `patientName` are NOT asserted as required: the OpenAPI
+    // contract (lib/api-zod/src/generated/api.ts, orval-generated from
+    // lib/api-spec/openapi.yaml) declares both as `.optional()`, so the API
+    // accepts a patient without them. This assertion previously demanded they
+    // appear in the issues list and failed, because it was testing a
+    // requirement the contract does not have.
+    //
+    // The operator-facing UI *does* require both (src/pages/patient-record-form
+    // blocks save without them), which is a deliberate split: the API stays
+    // permissive for programmatic and batch ingest, the form stays strict for
+    // humans. If patient identity should be mandatory at the API too, change
+    // openapi.yaml and re-run `pnpm api:codegen` — do not edit the generated
+    // file, or the next codegen silently reverts it.
+    expect(issues.map((i) => i.path)).toContain("age");
+    expect(issues.every((i) => i.source === "body")).toBe(true);
+    expect(issues.every((i) => typeof i.message === "string" && i.message.length > 0)).toBe(true);
   });
 
   it("returns 400 with structured issues when the :id is not an integer", async () => {

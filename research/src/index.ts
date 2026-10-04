@@ -17,15 +17,16 @@ import { gdprApp } from "./routes/gdpr";
 import { unsubscribeApp } from "./routes/unsubscribe";
 import { ingestApp } from "./routes/ingest";
 import { searchApp } from "./routes/search";
-import { issueCsrfToken } from "./lib/security";
+import { issueCsrfToken, csrfGuard } from "./lib/security";
 import type { AppBindings, AppVariables, AppContext } from "./lib/env";
 
 // This Worker now acts as a thin edge layer for research-center.fit:
 //   - static SPA assets are served by Cloudflare Assets (run_worker_first=/api/*)
-//   - every /api/* request is reverse-proxied to the Postgres-backed api-server
-//     (exposed locally via a cloudflared tunnel). This makes the FULL feature
-//     set (records, signup, users, admin, feedback, patients) available at the
-//     domain, sourced from the api-server rather than D1.
+//   - every /api/* request is either handled by the D1-backed clinical route
+//     modules mounted below, or reverse-proxied to the Postgres-backed
+//     api-server (exposed locally via a cloudflared tunnel). This makes the
+//     FULL feature set (records, signup, users, admin, feedback, patients)
+//     available at the domain, sourced from the api-server rather than D1.
 const app = new Hono<{ Bindings: AppBindings; Variables: AppVariables }>({ strict: false });
 
 // Inject a self-referential, per-host canonical <link> into every HTML document
@@ -35,6 +36,46 @@ const CANONICAL_HOSTS = new Set([
   "research-center.fit",
   "www.research-center.fit",
 ]);
+
+// ===========================================================================
+// KNOWN ISSUE — D1 / Postgres SPLIT BRAIN. Read before touching clinical routes.
+// ===========================================================================
+// This Worker mounts two independent stores behind one `/api/*` prefix:
+//
+//   * The D1 (SQLite) clinical/compliance routes below — consent, coding,
+//     cohort, deidentify, dicom, gdpr, ml, validation, ingest, search,
+//     studies, export, reports, unsubscribe — read and write D1 tables such as
+//     `patients`, `dicom_images`, `consents`, `records`, `pseudonyms`.
+//   * Everything else under `/api/*` is proxied to the Express api-server,
+//     which is backed by POSTGRES.
+//
+// `artifacts/research-data/src/pages/*` create patients and records through the
+// proxy, so they land in Postgres. NOTHING in the product ever writes the D1
+// `patients` table. In production that table is therefore EMPTY, and every D1
+// clinical route is reading rows that do not exist.
+//
+// Consequences an operator must expect:
+//   * List endpoints silently return `[]`; "0 patients" is an artefact of the
+//     split brain, not a fact about the data.
+//   * `/api/deidentify/export` now returns 409 rather than a 0-row CSV, so a
+//     de-identification run cannot be filed as a successful (empty) one.
+//   * `/api/gdpr/erasure/:id` clears D1, calls the api-server's
+//     `DELETE /api/gdpr/erasure/:id` (added 2026-10, in
+//     `artifacts/api-server/src/routes/gdpr.ts`) to clear the live Postgres
+//     PHI, and deletes the patient's S3/R2 objects. It compares deleted counts
+//     against pre-SELECT counts per store and returns `ok:false` + HTTP 500 +
+//     a `pending_erasure` marker if ANY store is short, so a partial erasure can
+//     never be filed as a complete one. It requires `ERASURE_SECRET` (falling
+//     back to `INBOUND_EMAIL_SECRET`) on both sides; if that is unset the route
+//     fails closed with 503 rather than silently under-erasing.
+//   * `/api/cohort/*` returns 0 rows; an export of them is an empty CSV.
+//
+// THE FIX IS A DATA-LAYER MIGRATION, NOT A ROUTE CHANGE: either dual-write
+// `patients` (and friends) into D1, or move these route modules to Postgres.
+// It is deliberately NOT performed here — it needs a migration plan, a backfill
+// and a rollback path. Until then, treat every D1 clinical response as
+// unverified and prefer the proxied Postgres API for anything user-facing.
+// ===========================================================================
 
 app.use("*", async (c, next) => {
   if (c.req.path.startsWith("/api/")) return next();
@@ -81,33 +122,65 @@ app.use("*", async (c, next) => {
 });
 
 
-// directly from D1 so they work even when API_BACKEND_URL is not configured.
-// Schema is bootstrapped idempotently on first request.
+// D1 schema bootstrap, run once per cold isolate (memoised inside
+// lib/db-bootstrap.ts). Errors are LOGGED, not swallowed: the previous
+// `catch { /* ignore */ }` made a failed bootstrap invisible while every
+// downstream handler failed with an opaque "no such table".
+//
+// RECOMMENDED FOLLOW-UP (data-layer migration, deliberately not done here):
+// the bootstrap issues ~69 sequential D1 statements (~14 kB of SQL) on every
+// cold isolate. Move them into versioned `wrangler d1 migrations apply`
+// migrations and replace this with a single `PRAGMA user_version` guard.
 app.use("/api/*", async (c, next) => {
   try {
     await ensureSchema(c.env.DB);
-  } catch {
-    /* ignore bootstrap failures; handlers will surface DB errors */
+  } catch (err) {
+    console.error("[db-bootstrap] ensureSchema failed:", err);
   }
   await next();
 });
 
-app.route("/api/consent", consentApp);
-app.route("/api/deidentify", deidentifyApp);
-app.route("/api/record-versions", recordVersionsApp);
-app.route("/api/record-verify", recordVerifyApp);
-app.route("/api/codings", codingApp);
-app.route("/api/cohort", cohortApp);
-app.route("/api/validation", validationApp);
-app.route("/api/dicom", dicomApp);
-app.route("/api/export", exportApp);
-app.route("/api/studies", studiesApp);
-app.route("/api/ml", mlApp);
-app.route("/api/reports", reportsApp);
-app.route("/api/gdpr", gdprApp);
-app.route("/api/ingest", ingestApp);
-app.route("/api/search", searchApp);
-app.route("/api/unsubscribe", unsubscribeApp);
+// CSRF double-submit enforcement for the Worker's own D1-backed clinical routes.
+//
+// `csrfGuard` was DEFINED in lib/security.ts but never imported or registered,
+// so no D1 mutation was protected at this layer. It is registered per mount
+// below, immediately before each D1 sub-app.
+//
+// Deliberately NOT applied to the proxied `/api/*` catch-all: those routes are
+// authenticated by the api-server's own `connect.sid` session, and requiring the
+// Worker's separate `csrf` cookie there broke login (see the proxy comment).
+// Proxied traffic is protected by the CANONICAL_HOSTS allow-list in
+// proxyToBackend plus the api-server's own same-origin guard.
+//
+// `csrfGuard` skips GET/HEAD/OPTIONS and Bearer-token requests. That means NO
+// state-changing endpoint may be a GET — see the deidentify/export note.
+const D1_ROUTE_MOUNTS: Array<[string, typeof consentApp]> = [
+  ["/api/consent", consentApp],
+  ["/api/deidentify", deidentifyApp],
+  ["/api/record-versions", recordVersionsApp],
+  ["/api/record-verify", recordVerifyApp],
+  ["/api/codings", codingApp],
+  ["/api/cohort", cohortApp],
+  ["/api/validation", validationApp],
+  ["/api/dicom", dicomApp],
+  ["/api/export", exportApp],
+  ["/api/studies", studiesApp],
+  ["/api/ml", mlApp],
+  ["/api/reports", reportsApp],
+  ["/api/gdpr", gdprApp],
+  ["/api/ingest", ingestApp],
+  ["/api/search", searchApp],
+  ["/api/unsubscribe", unsubscribeApp],
+];
+
+// See the KNOWN ISSUE block above: these D1 tables are empty in production.
+for (const [prefix, subApp] of D1_ROUTE_MOUNTS) {
+  // Both the bare prefix and the wildcard, so a request to `/api/consent`
+  // itself is covered as well as `/api/consent/versions`.
+  app.use(prefix, csrfGuard);
+  app.use(`${prefix}/*`, csrfGuard);
+  app.route(prefix, subApp);
+}
 // /api/saved-views is handled by the Postgres-backed api-server (proxied below),
 // so it shares the same session as the rest of the records feature.
 
@@ -117,8 +190,25 @@ app.get("/api/csrf", (c: AppContext) => {
   return c.json({ csrfToken: token });
 });
 
-// Proxy to the Postgres-backed api-server. CSRF-protected for session-cookie
-// clients; Bearer/API-token requests are exempt (see csrfGuard).
+// Proxy to the Postgres-backed api-server.
+//
+// CSRF for proxied requests is enforced in TWO places now:
+//
+//  1. HERE (defence in depth). The browser->Worker hop is the only hop a
+//     cross-site attacker controls, so the request is checked against
+//     CANONICAL_HOSTS before it is forwarded.
+//  2. AT THE API-SERVER, which has its own same-origin guard
+//     (artifacts/api-server/src/app.ts:140-158) comparing the forwarded
+//     `Origin` against its ALLOWED_ORIGINS / request host.
+//
+// Previously this function did `headers.set("origin", base)`, OVERWRITING the
+// client's Origin with the Worker's own backend URL. That made the api-server's
+// guard unconditionally pass, for every host, always: any site on the internet
+// could POST /api/* through this Worker with a logged-in victim's cookies.
+// The overwrite is removed — the client's Origin is now passed through
+// untouched, and deleted entirely when absent (a same-origin navigation from an
+// older browser that omits Origin still works, and the api-server treats a
+// missing Origin as same-origin).
 async function proxyToBackend(c: AppContext): Promise<Response> {
   const base = (c.env.API_BACKEND_URL || "").replace(/\/+$/, "");
   if (!base) {
@@ -126,14 +216,30 @@ async function proxyToBackend(c: AppContext): Promise<Response> {
   }
 
   const url = new URL(c.req.url);
+
+  // Defence-in-depth origin allow-list. Only reject a request that CARRIES an
+  // Origin; an absent Origin means a same-origin form post / curl / server-side
+  // call and is left alone (the api-server applies the same rule).
+  const clientOrigin = c.req.header("origin");
+  if (clientOrigin) {
+    let originHost = "";
+    try {
+      originHost = new URL(clientOrigin).host;
+    } catch {
+      return c.json({ error: "Cross-origin request forbidden" }, 403);
+    }
+    if (!CANONICAL_HOSTS.has(originHost)) {
+      return c.json({ error: "Cross-origin request forbidden" }, 403);
+    }
+  }
+
   const target = `${base}${url.pathname}${url.search}`;
 
-  // The Worker is a reverse proxy to the api-server. Present the backend's own
-  // origin (not the front-end's, e.g. https://www.research-center.fit) so the
-  // api-server's same-origin / allowed-origin CSRF guard accepts requests from
-  // any front-end hostname without enumerating each in ALLOWED_ORIGINS.
   const headers = new Headers(c.req.raw.headers);
-  headers.set("origin", base);
+  // Preserve the client's Origin so the api-server's guard can actually
+  // evaluate it. Never synthesise one.
+  if (clientOrigin) headers.set("origin", clientOrigin);
+  else headers.delete("origin");
   const init: RequestInit = {
     method: c.req.method,
     headers,
@@ -162,16 +268,18 @@ async function proxyToBackend(c: AppContext): Promise<Response> {
 
 // Proxy to the Postgres-backed api-server. These routes are owned by the
 // api-server, which is the session authority (it issues the `connect.sid`
-// cookie). CSRF is therefore enforced at the api-server, not here — applying the
-// Worker's separate CSRF cookie to these proxied requests only broke auth. The
-// Worker's own D1-backed routes above remain the Worker's responsibility.
+// cookie). The Worker does NOT apply its own `csrf` double-submit cookie here:
+// it is a different cookie from the api-server's session, and requiring it broke
+// login. CSRF for these routes is enforced by (a) the CANONICAL_HOSTS allow-list
+// in proxyToBackend and (b) the api-server's own same-origin guard, which now
+// sees the real client Origin because we no longer overwrite it.
 app.all("/api/*", async (c: AppContext) => {
   return proxyToBackend(c);
 });
 
 // Non-API requests are served by Static Assets (SPA). Because of
-// run_worker_first = ["/api/*"], this handler is only reached for unmatched
-// API routes; in that case we surface a 404.
+// run_worker_first = ["/api/*"], this handler is only reached for a non-API
+// path that the assets layer did not satisfy; surface a 404.
 app.all("*", async (c: AppContext) => {
   const assets = c.env.ASSETS;
   if (assets) {

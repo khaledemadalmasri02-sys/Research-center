@@ -33,9 +33,15 @@ function buildApp(opts: {
           "http://localhost:3000",
           "http://localhost:3003",
           "http://localhost:3004",
+          "http://localhost:4000",
+          "http://localhost:4003",
+          "http://localhost:4004",
           "http://127.0.0.1:3000",
           "http://127.0.0.1:3003",
           "http://127.0.0.1:3004",
+          "http://127.0.0.1:4000",
+          "http://127.0.0.1:4003",
+          "http://127.0.0.1:4004",
         ]);
 
   const app = express();
@@ -83,8 +89,8 @@ describe("api-server CORS / Origin guard (P0.4)", () => {
     it("allows POST from an allowed origin", async () => {
       const res = await request(app)
         .post("/api/echo")
-        .set("Origin", "http://localhost:3004")
-        .set("Host", "localhost:3004");
+        .set("Origin", "http://localhost:4004")
+        .set("Host", "localhost:4004");
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ ok: true });
     });
@@ -93,7 +99,7 @@ describe("api-server CORS / Origin guard (P0.4)", () => {
       const res = await request(app)
         .post("/api/echo")
         .set("Origin", "http://evil.example")
-        .set("Host", "localhost:3004");
+        .set("Host", "localhost:4004");
       expect(res.status).toBe(403);
       expect(res.body).toEqual({ error: "Cross-origin request forbidden" });
     });
@@ -102,14 +108,15 @@ describe("api-server CORS / Origin guard (P0.4)", () => {
       const res = await request(app)
         .get("/api/echo")
         .set("Origin", "http://evil.example")
-        .set("Host", "localhost:3004");
+        .set("Host", "localhost:4004");
       expect(res.status).toBe(200);
     });
 
-    it("allows POST with no Origin (same-origin / non-browser)", async () => {
+    it("allows GET from a disallowed origin (safe method)", async () => {
       const res = await request(app)
-        .post("/api/echo")
-        .set("Host", "localhost:3004");
+        .get("/api/echo")
+        .set("Origin", "http://evil.example")
+        .set("Host", "localhost:4004");
       expect(res.status).toBe(200);
     });
   });
@@ -150,7 +157,7 @@ describe("api-server CORS / Origin guard (P0.4)", () => {
       const res = await request(app)
         .post("/api/echo")
         .set("Origin", "https://random-cloud-ide.preview")
-        .set("Host", "localhost:3004");
+        .set("Host", "localhost:4004");
       expect(res.status).toBe(200);
     });
   });

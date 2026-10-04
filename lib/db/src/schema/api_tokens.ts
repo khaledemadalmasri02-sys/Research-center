@@ -1,5 +1,16 @@
 import { pgTable, text, serial, timestamp, integer, jsonb } from "drizzle-orm/pg-core";
 
+/**
+ * Scopes an API token may hold.
+ *
+ * "admin" stays in this list because it is part of the STORED vocabulary:
+ * tokens issued before the self-service escalation fix may still carry it,
+ * and the stored value has to remain readable/resolvable. It is NOT
+ * self-service requestable — `routes/tokens.ts` rejects it unless the
+ * caller is already an admin, and `lib/apiToken.ts` only honours it when the
+ * token's owner also has `canAdmin_access`. Keep it in the list; do not add
+ * it back to the frontend's requestable scope picker.
+ */
 export const API_TOKEN_SCOPES = [
   "read",
   "write",

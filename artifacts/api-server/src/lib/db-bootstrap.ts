@@ -85,15 +85,6 @@ export async function ensureInboundEmailTable(): Promise<void> {
   `);
 }
 
-/**
- * @deprecated use runAllMigrations() — kept for backwards compatibility with
- * the old startup chain. The `authTables` portion is now a no-op since the
- * Drizzle migration covers every table it used to create.
- */
-export async function ensureAuthTables(): Promise<void> {
-  // No-op. Tables are now created by runAllMigrations().
-}
-
 /** Run every bootstrap step in the order they were historically executed at startup. */
 export async function ensureAllTables(): Promise<void> {
   await runAllMigrations();

@@ -2,10 +2,11 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { pool } from "@workspace/db";
 import { writeAudit, clientIp } from "../lib/audit";
 import { requireAdmin } from "../middlewares/requireAdmin";
+import { requireAuth } from "./auth";
 
 const router: IRouter = Router();
 
-router.get("/db/tables", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/db/tables", requireAuth, requireAdmin, async (_req: Request, res: Response) => {
   const result = await pool.query(`
     SELECT
       table_name,
@@ -52,7 +53,7 @@ const SAFE_TABLES = new Set([
 // Only allow reading tables that actually exist in the public schema.
 // The table name is validated against the live catalog and never interpolated
 // unsafely — limit/offset are passed as bound parameters.
-router.get("/db/:table", requireAdmin, async (req: Request, res: Response) => {
+router.get("/db/:table", requireAuth, requireAdmin, async (req: Request, res: Response) => {
   const table = String(req.params.table);
   const limit = Math.min(parseInt(req.query.limit as string) || 100, 1000);
   const offset = parseInt(req.query.offset as string) || 0;

@@ -121,9 +121,29 @@ CREATE TABLE IF NOT EXISTS notifications (
   body TEXT NOT NULL DEFAULT '',
   link TEXT,
   read INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS IDX_notifications_user ON notifications (user_id);
+
+-- GDPR erasure: one row per (patient_id, run) that did not fully succeed in
+-- every store. An erasure that only cleared D1 while Postgres/S3 still held the
+-- patient's data used to return {ok:true} and disappear; this table makes the
+-- incomplete runs visible and retryable. The stores column records which store
+-- failed and attempts lets a human (or a scheduled job) see how often it has
+-- failed.
+CREATE TABLE IF NOT EXISTS pending_erasure (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  patient_id INTEGER NOT NULL,
+  requested_by INTEGER,
+  status TEXT NOT NULL DEFAULT 'pending',
+  stores TEXT NOT NULL DEFAULT '{}',
+  detail TEXT,
+  attempts INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS IDX_pending_erasure_patient ON pending_erasure (patient_id);
+CREATE INDEX IF NOT EXISTS IDX_pending_erasure_status ON pending_erasure (status);
 
 CREATE TABLE IF NOT EXISTS radiology_images (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -447,9 +467,37 @@ export async function ensureSchema(db: D1Database): Promise<void> {
     for (const sql of statements) {
       await db.prepare(sql).run();
     }
-  })();
+  })().catch((err) => {
+    // Reset the memo so a transient D1 error does NOT permanently disable
+    // schema bootstrap for the lifetime of this isolate. Without this, one
+    // blip (D1 rate limit, a brief network partition, a locked database) left
+    // `bootstrapPromise` permanently rejected: every subsequent request on the
+    // same isolate awaited the same rejected promise and never retried, so the
+    // schema was never created for the whole life of the warm isolate.
+    bootstrapPromise = null;
+    throw err;
+  });
   return bootstrapPromise;
 }
+
+// PERF: the statements above are ~69 separate round-trips (34 CREATE TABLE +
+// 31 CREATE INDEX + a handful of de-duplicating UPDATEs, ~14 kB of SQL) issued
+// on every cold isolate, which delays the first request of every deploy by
+// hundreds of milliseconds for a schema that has not changed since the last
+// deploy.
+//
+// RECOMMENDED FOLLOW-UP (deliberately not done here — it is a data-layer
+// migration, not a hotfix):
+//   1. Move TABLE_SQL into versioned migrations and apply them out of band
+//      with `wrangler d1 migrations apply mednexus-research --env production
+//      --remote`.
+//   2. Replace this module with a single cheap guard:
+//        PRAGMA user_version;
+//      and only run the bootstrap when user_version < EXPECTED_VERSION,
+//      bumping the pragma at the end of each migration.
+//   3. Keep a short timeout/abort on the guard so a cold-start regression is
+//      visible in metrics rather than silently serialised behind 69 writes.
+// The `.catch` above is the minimum fix and is safe to keep either way.
 
 // Ensure at least one admin exists. On a fresh database we seed an admin from
 // the configured APP_USERNAME / APP_PASSWORD_HASH (falling back to the well

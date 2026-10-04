@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { logger } from "../lib/logger";
+import { rateLimit, clientIp } from "../lib/security";
 
 /**
  * Crash-report receiver.
@@ -13,13 +14,16 @@ import { logger } from "../lib/logger";
  * Why this route is unauthenticated:
  *   - The user can't log in if the app is broken.
  *   - The payload is anonymous by design: it carries the user agent
- *     and a stack trace, but no user ID, no PII. The Worker
- *     upstream records the request's IP for rate limiting.
- *   - Rate limiting happens at the Worker layer
- *     (`/api/crash-report` is on the allowlist there). If you ever
- *     expose this endpoint to a path that's not rate-limited, add
- *     a per-IP throttle here.
+ *     and a stack trace, but no user ID, no PII.
+ *
+ * Rate limiting (A18): the previous comment claimed "rate limiting happens at
+ * the Worker layer" — there is no such rate limit, and this endpoint is
+ * mounted outside `requireAuth`, so anyone could flood the log pipeline (and
+ * the pino transport behind it) with arbitrary payloads. There is now a
+ * per-IP budget here as well.
  */
+const CRASH_REPORT_LIMIT = 20; // per IP per 15 min — a render loop can fire
+const CRASH_REPORT_WINDOW_MS = 15 * 60 * 1000; // several; a flood cannot.
 
 const router: IRouter = Router();
 
@@ -39,6 +43,17 @@ const CrashReportBody = z
   .passthrough();
 
 router.post("/crash-report", (req: Request, res: Response) => {
+  const limit = rateLimit(
+    `crash-report:${clientIp(req)}`,
+    CRASH_REPORT_LIMIT,
+    CRASH_REPORT_WINDOW_MS,
+  );
+  if (!limit.success) {
+    res.set("Retry-After", String(limit.retryAfterSec));
+    res.status(429).json({ error: "Too many crash reports. Try again later." });
+    return;
+  }
+
   const parsed = CrashReportBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid crash report" });

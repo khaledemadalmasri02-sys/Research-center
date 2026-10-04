@@ -10,8 +10,27 @@ import {
 } from "@aws-sdk/client-s3";
 import { s3Client } from "../src/lib/objectStorage.ts";
 import { withDb, type DbFixture } from "./helpers/db";
+import { pool } from "@workspace/db";
 
 const BUCKET = process.env.S3_BUCKET ?? "test-bucket";
+const PATIENT_TABLE = process.env.PATIENT_TABLE ?? "patients";
+
+/**
+ * /storage/images/by-patient/:patientId is now scoped to the caller's own
+ * patients (it used to enumerate every patient's keys for any authenticated
+ * caller), so the fixture needs a patients row owned by the session user.
+ */
+async function seedPatient(
+  userId: number,
+  patientId: string,
+  name = "Fixture Patient",
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO "${PATIENT_TABLE}" ("patient_id", "patient_name", "user_id", "created_at", "updated_at")
+     VALUES ($1, $2, $3, now(), now())`,
+    [patientId, name, userId],
+  );
+}
 
 async function seedObject(key: string, body = "fake-bytes") {
   await s3Client.send(
@@ -50,10 +69,12 @@ describe("P1.14 — /storage/images/by-patient/:patientId", () => {
 
   beforeEach(async () => {
     await wipeBucket();
-    await t.createUser({
+    const userId = await t.createUser({
       username: "byPatientUser",
       password: "StrongPass1!",
     });
+    // Owned by the caller: 42 is the patient under test.
+    await seedPatient(userId, "42");
   });
 
   it("returns only the keys for the requested patient", async () => {
@@ -100,10 +121,13 @@ describe("P1.14 — /storage/images/search prefix scoping", () => {
 
   beforeEach(async () => {
     await wipeBucket();
-    await t.createUser({
+    const userId = await t.createUser({
       username: "searchUser",
       password: "StrongPass1!",
     });
+    // Image search is now ownership-scoped: the caller must own the patient
+    // it searches within.
+    await seedPatient(userId, "7");
   });
 
   it("identifier-based search lists only matching prefixes, never the whole bucket", async () => {
@@ -165,6 +189,15 @@ describe("P1.14 — /storage/images/search prefix scoping", () => {
     });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/invalid patientId/i);
+  });
+
+  it("refuses to search inside another user's patient", async () => {
+    await seedObject("radiology/patient_7_1.png");
+    const agent = await t.loginAs("searchUser", "StrongPass1!");
+    const res = await agent
+      .post("/api/storage/images/search")
+      .send({ filename: "1.png", patientId: "8" });
+    expect([403, 404]).toContain(res.status);
   });
 
   it("returns 404 when no objects match", async () => {

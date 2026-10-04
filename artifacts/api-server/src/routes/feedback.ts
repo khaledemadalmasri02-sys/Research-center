@@ -4,6 +4,7 @@ import { db, feedbackTable, usersTable } from "@workspace/db";
 import { writeAudit, clientIp } from "../lib/audit";
 import { notify } from "../lib/notifications";
 import { validate, z } from "../lib/validate";
+import { requireAuth } from "./auth";
 
 const router: IRouter = Router();
 
@@ -22,6 +23,7 @@ const ReviewFeedbackParams = z.object({
 // Submit feedback (any authenticated user)
 router.post(
   "/feedback",
+  requireAuth,
   validate({ body: SubmitFeedbackBody }),
   async (req: Request, res: Response) => {
     const { type, message, rating } = req.validated!.body as z.infer<typeof SubmitFeedbackBody>;
@@ -53,7 +55,7 @@ router.post(
 });
 
 // List feedback (admin only)
-router.get("/feedback", async (req: Request, res: Response) => {
+router.get("/feedback", requireAuth, async (req: Request, res: Response) => {
   if (!req.session.canAdminAccess) {
     res.status(403).json({ error: "Admin access required." });
     return;
@@ -80,6 +82,7 @@ router.get("/feedback", async (req: Request, res: Response) => {
 // Mark feedback as reviewed (admin only)
 router.patch(
   "/feedback/:id/review",
+  requireAuth,
   validate({ params: ReviewFeedbackParams }),
   async (req: Request, res: Response) => {
     if (!req.session.canAdminAccess) {

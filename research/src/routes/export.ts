@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import type { AppBindings, AppVariables, AppContext } from "../lib/env";
-import { getAuthUser, writeAudit } from "../lib/security";
+import {
+  getAuthUser,
+  writeAudit,
+  loadScopedRecord,
+  type AuthUser,
+} from "../lib/security";
 
 // ---- Pure FHIR / HL7 builders (exported for unit tests) ----
 
@@ -148,16 +153,18 @@ export const exportApp = new Hono<{
   Variables: AppVariables;
 }>();
 
-async function loadRecord(c: AppContext, recordId: number) {
-  const rec = await c.env.DB.prepare("SELECT * FROM records WHERE id = ?").bind(recordId).first<any>();
+// IDOR FIX: this used to be `SELECT * FROM records WHERE id = ?` with no owner
+// check, then `buildFhirBundle` emitted `Patient.name[].text = data.patientName`
+// and `buildHl7V2` wrote PID-5 — i.e. `GET /api/export/fhir?recordId=1..N` walked
+// the whole `records` table and exported any authenticated user's patient names
+// and demographics as standards-compliant FHIR/HL7. Contrast the Postgres
+// api-server's `records.ts`, which does check ownership.
+//
+// `loadScopedRecord` binds `user_id = ?` in SQL for non-admins, so an
+// unauthorised record is simply not found (404, not 403 — no existence oracle).
+async function loadRecord(c: AppContext, recordId: number, user: AuthUser) {
+  const rec = await loadScopedRecord(c, recordId, user);
   if (!rec) return null;
-  const data = (() => {
-    try {
-      return typeof rec.data === "string" ? JSON.parse(rec.data) : rec.data;
-    } catch {
-      return {};
-    }
-  })();
   const codesRows = await c.env.DB
     .prepare("SELECT code_system, code, display FROM diagnosis_codes WHERE record_id = ?")
     .bind(recordId)
@@ -167,7 +174,7 @@ async function loadRecord(c: AppContext, recordId: number) {
     code: r.code,
     display: r.display,
   }));
-  return { id: rec.id, data, codes };
+  return { id: rec.id, data: rec.data, codes };
 }
 
 exportApp.get("/fhir", async (c: AppContext) => {
@@ -175,11 +182,11 @@ exportApp.get("/fhir", async (c: AppContext) => {
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
   const recordId = parseInt(c.req.query("recordId") ?? "", 10);
   if (!Number.isInteger(recordId)) return c.json({ error: "recordId is required." }, 400);
-  const rec = await loadRecord(c, recordId);
+  const rec = await loadRecord(c, recordId, auth.user);
   if (!rec) return c.json({ error: "Not found" }, 404);
   const bundle = buildFhirBundle(rec);
   await writeAudit(c, { userId: auth.user.id, action: "export.fhir", entity: "record", entityId: recordId });
-  return c.json(bundle);
+  return c.json(bundle, 200, { "Cache-Control": "private, no-store" });
 });
 
 exportApp.get("/hl7", async (c: AppContext) => {
@@ -187,9 +194,12 @@ exportApp.get("/hl7", async (c: AppContext) => {
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
   const recordId = parseInt(c.req.query("recordId") ?? "", 10);
   if (!Number.isInteger(recordId)) return c.json({ error: "recordId is required." }, 400);
-  const rec = await loadRecord(c, recordId);
+  const rec = await loadRecord(c, recordId, auth.user);
   if (!rec) return c.json({ error: "Not found" }, 404);
   const msg = buildHl7V2(rec);
   await writeAudit(c, { userId: auth.user.id, action: "export.hl7", entity: "record", entityId: recordId });
-  return c.text(msg, 200, { "Content-Type": "application/hl7-v2" });
+  return c.text(msg, 200, {
+    "Content-Type": "application/hl7-v2",
+    "Cache-Control": "private, no-store",
+  });
 });

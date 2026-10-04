@@ -78,11 +78,23 @@ mlApp.post("/models", async (c: AppContext) => {
 });
 
 // GET /api/ml/models — list models (auth)
+// Bounded: was `SELECT * FROM ml_models ORDER BY created_at DESC` with no LIMIT,
+// i.e. every model row ever registered, in one unbounded response.
 mlApp.get("/models", async (c: AppContext) => {
   const auth = await getAuthUser(c);
   if (!auth) return c.json({ error: "Unauthorized" }, 401);
-  const rows = await c.env.DB.prepare("SELECT * FROM ml_models ORDER BY created_at DESC").all<any>();
+  const limit = Math.min(
+    Math.max(parseInt(c.req.query("limit") || "100", 10) || 100, 1),
+    500
+  );
+  const offset = Math.max(parseInt(c.req.query("offset") || "0", 10) || 0, 0);
+  const rows = await c.env.DB
+    .prepare("SELECT * FROM ml_models ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .bind(limit, offset)
+    .all<any>();
   return c.json({
+    limit,
+    offset,
     models: (rows.results || []).map((m: any) => ({
       id: m.id,
       name: m.name,
@@ -156,8 +168,20 @@ mlApp.post("/evaluate", async (c: AppContext) => {
   const positiveLabel = body?.positiveLabel ?? "positive";
   if (!Number.isInteger(modelId)) return c.json({ error: "modelId is required." }, 400);
 
-  const preds = await c.env.DB.prepare("SELECT record_id, confidence FROM ml_predictions WHERE model_id = ?").bind(modelId).all<any>();
-  const gtRows = await c.env.DB.prepare("SELECT record_id, label FROM ml_groundtruth").all<any>();
+  // Bounded. `ml_predictions` was unbounded per model, and the ground-truth
+  // read had NO WHERE clause at all — the entire labelled dataset, every
+  // patient's label, pulled into the Worker to compute four scalar metrics.
+  const EVAL_ROW_CAP = 10000;
+  const preds = await c.env.DB
+    .prepare(
+      "SELECT record_id, confidence FROM ml_predictions WHERE model_id = ? LIMIT ?"
+    )
+    .bind(modelId, EVAL_ROW_CAP)
+    .all<any>();
+  const gtRows = await c.env.DB
+    .prepare("SELECT record_id, label FROM ml_groundtruth LIMIT ?")
+    .bind(EVAL_ROW_CAP)
+    .all<any>();
   const gt: Record<string, string> = {};
   for (const r of gtRows.results || []) gt[String(r.record_id)] = r.label;
 

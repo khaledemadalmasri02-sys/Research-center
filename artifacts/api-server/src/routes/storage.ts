@@ -7,12 +7,15 @@ import { ObjectStorageService, BucketNotFoundError } from "../lib/objectStorage"
 import { s3Client } from "../lib/objectStorage";
 import { PutObjectCommand, ListObjectsV2Command, GetObjectCommand } from "@aws-sdk/client-s3";
 import { Readable } from "stream";
+import { randomUUID } from "node:crypto";
 import { db, patientsTable, pool } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { radiologyImageService } from "../lib/radiologyImages";
 import { ensureUserPatientsDefinition } from "../lib/patientsCollection";
 import { logger } from "../lib/logger";
 import { requireAuth } from "./auth";
+import { requireAdmin } from "../middlewares/requireAdmin";
+import { canAccessObject, ObjectPermission } from "../lib/objectAcl";
 import { safeFetch } from "../lib/ssrf";
 import { rateLimit, clientIp } from "../lib/security";
 
@@ -51,6 +54,10 @@ const objectStorageService = new ObjectStorageService();
 // Authenticate every storage route except the public object viewer and the
 // anonymous health check. Previously the entire router was open, exposing
 // private radiology images and allowing unauthenticated uploads / SSRF.
+//
+// These four prefixes cover every route below except two, which carry their own
+// `requireAuth`: /storage/health and /storage/upload-file (the latter is not
+// under /storage/uploads).
 router.use("/storage/objects", requireAuth);
 router.use("/storage/uploads", requireAuth);
 router.use("/storage/images", requireAuth);
@@ -72,8 +79,27 @@ const S3_LIST_MAX_PAGES = 100; // hard cap to avoid pathological loops
  * patient (prefix-injection). We only allow digits since patient
  * IDs in the DB are integer serial columns.
  */
-function isSafePatientIdForPrefix(value: string): boolean {
+export function isSafePatientIdForPrefix(value: string): boolean {
   return /^[0-9]+$/.test(value);
+}
+
+/**
+ * The canonical radiology prefix for one patient's images:
+ * `radiology/patient_<id>`. The underscore form
+ * (`radiology/patient_<id>_1700000000_ab12.png`) is what the upload and
+ * import routes have always written, so the prefix stops *before* the
+ * separator and every returned key is matched exactly against
+ * `patient_<id>` followed by `_` or `/`. That keeps `patient_42` from
+ * matching `patient_420` (a prefix-collision read of another patient's
+ * images) while also covering the newer `patient_42/<uuid>.png` layout.
+ */
+export function radiologyPatientPrefix(patientId: string): string {
+  return `radiology/patient_${patientId}`;
+}
+
+function matchesPatientPrefix(key: string, patientId: string): boolean {
+  const marker = `radiology/patient_${patientId}`;
+  return key.startsWith(`${marker}_`) || key.startsWith(`${marker}/`);
 }
 
 /**
@@ -83,7 +109,7 @@ function isSafePatientIdForPrefix(value: string): boolean {
  * (thrown). Capped at S3_LIST_MAX_PAGES * S3_LIST_PAGE_SIZE = 100 000
  * keys per call to defend against runaway buckets.
  */
-async function listAllObjectsUnderPrefix(
+export async function listAllObjectsUnderPrefix(
   bucket: string,
   prefix: string,
 ): Promise<string[]> {
@@ -112,21 +138,133 @@ async function listAllObjectsUnderPrefix(
 }
 
 /**
- * Find every radiology object whose key starts with
- * `radiology/patient_<patientId>_`. The patientId is validated as a
- * digit-only string before being interpolated into the prefix.
+ * Find every radiology object that belongs to `patientId`.
+ *
+ * The patientId is validated as a digit-only string before being
+ * interpolated into the prefix (prefix-injection guard), the listing is
+ * paginated, and the results are filtered to the exact patient so a
+ * `patient_4` request can never return `patient_42`'s images.
  *
  * Returns an empty array when the patient has no images. Throws on S3
  * errors so the route can return a real 5xx instead of a misleading
  * 200-with-empty-array.
  */
-async function discoverImagesByPatientId(patientId: string): Promise<string[]> {
+export async function discoverImagesByPatientId(patientId: string): Promise<string[]> {
   if (!patientId) return [];
   if (!isSafePatientIdForPrefix(patientId)) {
     throw new Error("Invalid patient id");
   }
   const bucket = objectStorageService.getBucket();
-  return listAllObjectsUnderPrefix(bucket, `radiology/patient_${patientId}_`);
+  const found = await listAllObjectsUnderPrefix(bucket, radiologyPatientPrefix(patientId));
+  return found.filter((key) => matchesPatientPrefix(key, patientId));
+}
+
+// ---- Object ownership / ACL authorisation (A3) ------------------------------
+//
+// Before this existed the only check on the object read path was the
+// `radiology/` prefix allowlist: any authenticated user could read any other
+// user's radiology image by guessing/stealing the object key. Two gates now
+// apply, in order:
+//
+//   1. the object ACL layer (lib/objectAcl.ts) — an explicit owner match or
+//      explicit `visibility: "public"` grants access;
+//   2. otherwise the patient id encoded in the key must belong to the caller
+//      (the same `patients.user_id` scoping routes/patients.ts uses).
+//
+// A key that names no patient and carries no ACL policy is "unattributable"
+// (the presigned-upload flow writes those keys — see
+// POST /storage/uploads/request-url) and keeps the historical prefix-only
+// behaviour. That is a deliberate, documented residual gap: an object
+// uploaded without a patientId has no owner to check against.
+const PATIENT_ID_IN_KEY = /(?:^|[/_-])patient_(\d+)(?:[/_.-]|$)/i;
+
+/** Extract the patient id a radiology key was written for, if any. */
+export function patientIdFromObjectKey(objectKey: string): string | null {
+  const match = PATIENT_ID_IN_KEY.exec(objectKey);
+  return match ? match[1]! : null;
+}
+
+/**
+ * Does the requesting session own a patient row with this (numeric) id?
+ * Patient ids are stored either bare ("42") or with a "PAT" prefix ("PAT42"),
+ * so both spellings are checked, mirroring the upload path.
+ */
+async function callerOwnsPatientId(req: Request, rawPatientId: string): Promise<boolean> {
+  const userId = req.session?.userId ?? 0;
+  const normalized = rawPatientId.replace(/^PAT/i, "");
+  const candidates = Array.from(new Set([normalized, rawPatientId]));
+  const rows = await db
+    .select({ id: patientsTable.id })
+    .from(patientsTable)
+    .where(
+      and(
+        eq(patientsTable.userId, userId),
+        // `patientId` is a text column; match either spelling.
+        eq(patientsTable.patientId, candidates[0]!),
+      ),
+    )
+    .limit(1);
+  if (rows.length > 0) return true;
+  if (candidates.length < 2) return false;
+  const alt = await db
+    .select({ id: patientsTable.id })
+    .from(patientsTable)
+    .where(and(eq(patientsTable.userId, userId), eq(patientsTable.patientId, candidates[1]!)))
+    .limit(1);
+  return alt.length > 0;
+}
+
+/** Admin reads are platform-scoped (same exception records.ts makes). */
+function isAdminSession(req: Request): boolean {
+  return req.session?.canAdminAccess === true;
+}
+
+/**
+ * Authorise a read of `objectKey` from the configured bucket. Returns `null`
+ * when access is allowed, or the response to send when it is not.
+ */
+async function denyObjectRead(
+  req: Request,
+  bucket: string,
+  objectKey: string,
+): Promise<{ status: number; error: string } | null> {
+  const userId = req.session?.userId ?? 0;
+
+  // Gate 1 — explicit ACL policy on the object.
+  try {
+    const allowed = await canAccessObject({
+      userId: String(userId),
+      objectFile: { bucketName: bucket, key: objectKey },
+      requestedPermission: ObjectPermission.READ,
+    });
+    if (allowed) return null;
+  } catch (err) {
+    // A broken ACL lookup must fail closed, never open.
+    logger.warn({ err, objectKey }, "Object ACL check failed — denying");
+    return { status: 403, error: "Access to this object is forbidden" };
+  }
+
+  // Gate 2 — the patient the key belongs to must be the caller's.
+  const patientId = patientIdFromObjectKey(objectKey);
+  if (!patientId) return null; // unattributable key: prefix-allowlist only
+  if (isAdminSession(req)) return null;
+  if (await callerOwnsPatientId(req, patientId)) return null;
+
+  return { status: 403, error: "Access to this object is forbidden" };
+}
+
+/**
+ * Ownership predicate for the per-patient image routes. Returns `null` when
+ * the caller owns the patient, or the 404 to send otherwise (mirrors how
+ * routes/patients.ts hides other users' patients).
+ */
+async function denyPatientImages(
+  req: Request,
+  rawPatientId: string,
+): Promise<{ status: number; error: string } | null> {
+  if (isAdminSession(req)) return null;
+  if (await callerOwnsPatientId(req, rawPatientId)) return null;
+  return { status: 404, error: "Patient not found" };
 }
 
 function isImageUrl(path: string): boolean {
@@ -225,7 +363,11 @@ async function attachToActiveCollection(patientIdText: string, objectKey: string
   }
 }
 
-router.get("/storage/health", async (_req: Request, res: Response) => {
+// Session-gated: this is a bucket readiness probe, not a public liveness
+// endpoint. (POLICY NOTE: the comment above calls it an "anonymous health
+// check", but it has always answered 401 without a session because it sat
+// behind the mount-level gate. Left as-is deliberately — see the report.)
+router.get("/storage/health", requireAuth, async (_req: Request, res: Response) => {
   try {
     await objectStorageService.ensureBucketExists();
     res.json({ status: "ok", storage: "healthy" });
@@ -255,9 +397,33 @@ router.post("/storage/uploads/request-url", async (req: Request, res: Response) 
   try {
     const { name, size, contentType } = parsed.data;
 
+    // Optional patient scoping. The OpenAPI body schema (RequestUploadUrlBody)
+    // only carries name/size/contentType, so `patientId` is an additive,
+    // optional field: when present the caller must own that patient, and the
+    // patient id is baked into the key so the object is attributable on the
+    // read path (see denyObjectRead). Without it the key is unattributable.
+    const requestedPatientId = (req.body as { patientId?: unknown } | undefined)?.patientId;
+    let patientPrefix = "";
+    if (typeof requestedPatientId === "string" && requestedPatientId.length > 0) {
+      const normalized = requestedPatientId.replace(/^PAT/i, "");
+      if (!isSafePatientIdForPrefix(normalized)) {
+        res.status(400).json({ error: "Invalid patientId" });
+        return;
+      }
+      const denied = await denyPatientImages(req, normalized);
+      if (denied) {
+        res.status(denied.status).json({ error: denied.error });
+        return;
+      }
+      patientPrefix = `patient_${normalized}_`;
+    }
+
     const bucket = objectStorageService.getBucket();
     const safeName = sanitizeFilename(name);
-    const objectId = `${Date.now()}-${safeName}`;
+    // Object ids must not come from Math.random(): V8's xorshift128+ state is
+    // recoverable from consecutive outputs, which makes every previously
+    // generated key predictable.
+    const objectId = `${Date.now()}-${patientPrefix}${safeName}`;
     const objectKey = `radiology/${objectId}`;
 
     const uploadURL = await objectStorageService.getPresignedUploadUrl(
@@ -280,44 +446,45 @@ router.post("/storage/uploads/request-url", async (req: Request, res: Response) 
   }
 });
 
-router.get("/storage/public-objects/*filePath", async (req: Request, res: Response) => {
-  try {
-    const raw = req.params.filePath;
-    const filePath = Array.isArray(raw) ? raw.join("/") : (raw as string);
-    
-    if (!objectStorageService.getPublicObjectSearchPaths().length) {
-      res.status(200).type("image/svg+xml").set("Cache-Control", "public, max-age=3600").send(
-        Buffer.from(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9ca3af" font-family="system-ui" font-size="14" font-weight="500">Image not found</text></svg>',
-          'utf-8'
-        )
-      );
-      return;
-    }
-    
-    const file = await objectStorageService.searchPublicObject(filePath);
-    if (!file) {
-      res.status(200).type("image/svg+xml").set("Cache-Control", "public, max-age=3600").send(
-        Buffer.from(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9ca3af" font-family="system-ui" font-size="14" font-weight="500">Image not found</text></svg>',
-          'utf-8'
-        )
-      );
-      return;
-    }
-
-    await streamObject(res, file.bucketName, file.key);
-  } catch (error) {
-    const err = error as Error;
-    req.log.error({ err: err.message, filePath: req.params.filePath }, "Error serving public object");
-    res.status(200).type("image/svg+xml").set("Cache-Control", "public, max-age=3600").send(
-      Buffer.from(
-        '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#9ca3af" font-family="system-ui" font-size="14" font-weight="500">Image not found</text></svg>',
-        'utf-8'
-      )
+/**
+ * RETIRED (2026-10): `GET /api/storage/public-objects/*filePath`.
+ *
+ * This route had NO authentication of its own. It resolved
+ * `searchPublicObject(filePath)` against the whole configured search path
+ * (`PUBLIC_OBJECT_SEARCH_PATHS`, historically `/mednexus`) and streamed
+ * whatever it found — including `backups/*.sql`, which are unencrypted full
+ * `pg_dump` database dumps written by POST /api/admin/backup into the same
+ * bucket. Nothing legitimately uses it unauthenticated:
+ *
+ *   - the current SPA resolves images through
+ *     `/api/storage/objects/<key>` (see artifacts/research-data/src/lib/
+ *     radiology-images.ts), which is authenticated;
+ *   - the only reference left in the repo is the generated OpenAPI client
+ *     (lib/api-client-react/src/generated/api.ts), which nothing imports;
+ *   - research/src/routes/storage.ts (the legacy Worker) has its own,
+ *     separate storage implementation.
+ *
+ * So the route is guarded (auth + admin) and then answered 410 Gone rather
+ * than silently 404-ing, which gives any straggling client a clear,
+ * actionable answer and makes the retirement visible in logs. The
+ * `searchPublicObject` traversal hardening in lib/objectStorage.ts stays as
+ * defence in depth.
+ */
+router.get(
+  "/storage/public-objects/*filePath",
+  requireAuth,
+  requireAdmin,
+  async (req: Request, res: Response) => {
+    req.log.warn(
+      { filePath: req.params.filePath },
+      "Deprecated /storage/public-objects route was called",
     );
-  }
-});
+    res.status(410).json({
+      error:
+        "This endpoint was retired. Authenticated radiology images are served from /api/storage/objects/<key>.",
+    });
+  },
+);
 
 router.get("/storage/objects/*path", async (req: Request, res: Response) => {
   try {
@@ -331,6 +498,19 @@ router.get("/storage/objects/*path", async (req: Request, res: Response) => {
     }
 
     const bucket = objectStorageService.getBucket();
+
+    // ACL + patient-ownership check. Runs BEFORE any bytes are read from S3,
+    // so a denied request never streams the body.
+    const denied = await denyObjectRead(req, bucket, objectKey);
+    if (denied) {
+      req.log.warn(
+        { objectKey, userId: req.session?.userId },
+        "Denied object read (ACL/ownership)",
+      );
+      res.status(denied.status).json({ error: denied.error });
+      return;
+    }
+
     await streamObject(res, bucket, objectKey);
   } catch (error) {
     const err = error as { name?: string; message?: string };
@@ -407,7 +587,7 @@ router.post("/storage/images/import", async (req: Request, res: Response) => {
     const ext = guessExtension(url, contentType);
     const baseName = filename ? sanitizeFilename(filename.replace(/\.[^/.]+$/, "")) : `imported_${Date.now()}`;
     const cleanExt = ext.replace(/^\./, "");
-    const objectId = `${Date.now()}-${baseName}_${Math.random().toString(36).substring(2, 8)}.${cleanExt}`;
+    const objectId = `${Date.now()}-${baseName}_${randomUUID()}.${cleanExt}`;
     const objectKey = `radiology/${objectId}`;
 
     const bucket = objectStorageService.getBucket();
@@ -447,6 +627,16 @@ router.post("/storage/images/by-patient", async (req: Request, res: Response) =>
     return;
   }
 
+  // Writing an image onto a patient record is a PHI write against that
+  // patient's data, so the caller must own the patient.
+  if (patientId) {
+    const denied = await denyPatientImages(req, patientId.replace(/^PAT/i, ""));
+    if (denied) {
+      res.status(denied.status).json({ error: denied.error });
+      return;
+    }
+  }
+
   try {
     let response: Awaited<ReturnType<typeof safeFetch>>;
     try {
@@ -473,7 +663,7 @@ router.post("/storage/images/by-patient", async (req: Request, res: Response) =>
 
     const ext = guessExtension(url, contentType);
     const baseName = patientId ? `patient_${patientId}` : (filename ? sanitizeFilename(filename.replace(/\.[^/.]+$/, "")) : `imported_${Date.now()}`);
-    const objectId = `${Date.now()}-${baseName}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const objectId = `${Date.now()}-${baseName}_${randomUUID()}.${ext}`;
     const objectKey = `radiology/${objectId}`;
 
     const bucket = objectStorageService.getBucket();
@@ -503,6 +693,17 @@ router.get("/storage/images/by-patient/:patientId", async (req: Request, res: Re
     res.status(400).json({ error: "Invalid patientId" });
     return;
   }
+
+  // This route used to enumerate the image keys for ANY patient id: any
+  // authenticated user could read the object keys (and therefore fetch the
+  // images through /storage/objects/*) of every patient in the deployment.
+  // Scope it to the caller's own patients, mirroring routes/patients.ts.
+  const denied = await denyPatientImages(req, String(patientId));
+  if (denied) {
+    res.status(denied.status).json({ error: denied.error });
+    return;
+  }
+
   try {
     const images = await discoverImagesByPatientId(String(patientId));
     res.json({ patientId, images });
@@ -529,6 +730,20 @@ router.post("/storage/images/search", async (req: Request, res: Response) => {
     res.status(400).json({ error: "Invalid patientId" });
     return;
   }
+
+  // When the caller names a patient, that patient must be theirs — otherwise
+  // this route is an oracle for another user's object keys.
+  if (patientId) {
+    const denied = await denyPatientImages(req, String(patientId));
+    if (denied) {
+      res.status(denied.status).json({ error: denied.error });
+      return;
+    }
+  }
+  // NOTE: the `identifier`-only path cannot be ownership-checked (it is a
+  // free-form key fragment, not a patient id). It is prefix-scoped to
+  // `radiology/` and still gated by requireAuth; the object read path
+  // (`/storage/objects/*`) re-checks ownership before streaming bytes.
 
   try {
     const bucket = objectStorageService.getBucket();
@@ -600,13 +815,23 @@ router.post("/storage/images/search", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/storage/upload-file", async (req: Request, res: Response) => {
+router.post("/storage/upload-file", requireAuth, async (req: Request, res: Response) => {
   const limit = rateLimit(`upload-file:${clientIp(req)}`, UPLOAD_FILE_LIMIT, UPLOAD_FILE_WINDOW_MS);
   if (!limit.success) {
     tooManyRequests(res, limit.retryAfterSec);
     return;
   }
   const patientId = req.body?.patientId as string | undefined;
+
+  // Attaching an upload to a patient record is a PHI write against that
+  // patient's data: the caller must own it.
+  if (typeof patientId === "string" && patientId.length > 0) {
+    const denied = await denyPatientImages(req, patientId.replace(/^PAT/i, ""));
+    if (denied) {
+      res.status(denied.status).json({ error: denied.error });
+      return;
+    }
+  }
 
   // Ensure bucket exists first
   try {
@@ -640,7 +865,7 @@ router.post("/storage/upload-file", async (req: Request, res: Response) => {
     const sanitizedFilename = sanitizeFilename(filename);
     const ext = sanitizedFilename.split('.').pop() || 'jpg';
     const baseName = patientId ? `patient_${patientId}` : `upload_${Date.now()}`;
-    const objectId = `${Date.now()}-${baseName}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const objectId = `${Date.now()}-${baseName}_${randomUUID()}.${ext}`;
     const objectKey = `radiology/${objectId}`;
     
     const buffer = Buffer.from(fileData, 'base64');
@@ -653,7 +878,16 @@ router.post("/storage/upload-file", async (req: Request, res: Response) => {
       ContentType: contentType || 'image/jpeg',
     }));
     
-    const result: Record<string, any> = { objectPath: objectKey, objectUrl: `/api/storage/public-objects/${objectKey}` };
+    // `objectUrl` must be the AUTHENTICATED read path. It used to point at
+    // `/api/storage/public-objects/<key>`, a route that had no auth middleware
+    // at all and is now retired (410 Gone), so every caller that trusted this
+    // field received a dead link. Clients must fetch objects through
+    // `/api/storage/objects/<key>` with their session cookie, or via a
+    // presigned GET from `/api/storage/presigned-url`.
+    const result: Record<string, any> = {
+        objectPath: objectKey,
+        objectUrl: `/api/storage/objects/${objectKey}`,
+    };
     
     if (patientId) {
       req.log.info({ patientId }, "Looking up patient for image upload");

@@ -84,16 +84,34 @@ function coerceData(fields: FieldDef[], data: Record<string, unknown>): Record<s
   return out;
 }
 
+/**
+ * Replace the record's image rows with whatever the payload holds.
+ *
+ * A13: this used to `DELETE` and then `INSERT` one row at a time inside
+ * nested loops — 1 + N round-trips for N images (51 statements for 50
+ * images) and no transaction, so a failure midway left the record with a
+ * half-deleted image set. Now it is a single transaction with one batched
+ * multi-row INSERT.
+ */
 async function reconcileImages(fields: FieldDef[], recordId: number, data: Record<string, unknown>) {
   const imageKeys = fields.filter((f) => f.type === "image").map((f) => f.key);
 
-  await db.delete(recordImagesTable).where(eq(recordImagesTable.recordId, recordId));
+  const rows: Array<{ recordId: number; fieldKey: string; objectKey: string }> = [];
   for (const k of imageKeys) {
     const keys = Array.isArray(data[k]) ? (data[k] as string[]) : [];
     for (const objectKey of keys) {
-      await db.insert(recordImagesTable).values({ recordId, fieldKey: k, objectKey });
+      if (typeof objectKey === "string" && objectKey.length > 0) {
+        rows.push({ recordId, fieldKey: k, objectKey });
+      }
     }
   }
+
+  await db.transaction(async (tx) => {
+    await tx.delete(recordImagesTable).where(eq(recordImagesTable.recordId, recordId));
+    if (rows.length > 0) {
+      await tx.insert(recordImagesTable).values(rows);
+    }
+  });
 }
 
 async function canAccessDefinition(req: Request, id: number, write: boolean) {
@@ -108,7 +126,7 @@ async function canAccessDefinition(req: Request, id: number, write: boolean) {
 }
 
 // ---- Definitions ----------------------------------------------------------
-router.get("/records/definitions", async (req: Request, res: Response) => {
+router.get("/records/definitions", requireAuth, async (req: Request, res: Response) => {
   const s = scopeOf(req);
   // Collections are private: only the current user's own collections are returned.
   const defs = await db
@@ -137,7 +155,7 @@ router.get("/records/patients", requireAuth, async (req: Request, res: Response)
   res.json({ definition: def ?? null, records });
 });
 
-router.post("/records/definitions", requireEdit, async (req: Request, res: Response) => {
+router.post("/records/definitions", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const { name, fields } = req.body as { name?: string; fields?: unknown };
   if (!name || typeof name !== "string") {
     res.status(400).json({ error: "Name is required" });
@@ -166,7 +184,7 @@ router.post("/records/definitions", requireEdit, async (req: Request, res: Respo
   res.status(201).json({ definition: def });
 });
 
-router.get("/records/definitions/:id", async (req: Request, res: Response) => {
+router.get("/records/definitions/:id", requireAuth, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -180,7 +198,7 @@ router.get("/records/definitions/:id", async (req: Request, res: Response) => {
   res.json({ definition: def });
 });
 
-router.patch("/records/definitions/:id", requireEdit, async (req: Request, res: Response) => {
+router.patch("/records/definitions/:id", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -221,7 +239,7 @@ router.patch("/records/definitions/:id", requireEdit, async (req: Request, res: 
   res.json({ definition: updated });
 });
 
-router.delete("/records/definitions/:id", requireEdit, async (req: Request, res: Response) => {
+router.delete("/records/definitions/:id", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -248,7 +266,7 @@ router.delete("/records/definitions/:id", requireEdit, async (req: Request, res:
 });
 
 // ---- Records ---------------------------------------------------------------
-router.get("/records", async (req: Request, res: Response) => {
+router.get("/records", requireAuth, async (req: Request, res: Response) => {
   const s = scopeOf(req);
   const definitionId = req.query.definitionId ? Number(req.query.definitionId) : undefined;
   const definitionIdValid = Number.isInteger(definitionId) ? (definitionId as number) : undefined;
@@ -267,7 +285,7 @@ router.get("/records", async (req: Request, res: Response) => {
   res.json({ records: rows });
 });
 
-router.post("/records", requireEdit, async (req: Request, res: Response) => {
+router.post("/records", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const { definitionId, data } = req.body as { definitionId?: number; data?: Record<string, unknown> };
   if (!definitionId || !Number.isInteger(definitionId)) {
     res.status(400).json({ error: "definitionId is required" });
@@ -302,7 +320,7 @@ router.post("/records", requireEdit, async (req: Request, res: Response) => {
   res.status(201).json({ record });
 });
 
-router.get("/records/:id", async (req: Request, res: Response) => {
+router.get("/records/:id", requireAuth, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -327,7 +345,7 @@ router.get("/records/:id", async (req: Request, res: Response) => {
   res.json({ record, definition: def ?? null });
 });
 
-router.patch("/records/:id", requireEdit, async (req: Request, res: Response) => {
+router.patch("/records/:id", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -378,7 +396,7 @@ router.patch("/records/:id", requireEdit, async (req: Request, res: Response) =>
   res.json({ record: updated });
 });
 
-router.delete("/records/:id", requireEdit, async (req: Request, res: Response) => {
+router.delete("/records/:id", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -523,7 +541,7 @@ router.patch("/records/definitions/:id/default", requireAuth, async (req: Reques
 });
 
 // ---- Bulk import (create many records at once, e.g. from an uploaded file) -
-router.post("/records/:definitionId/import", requireEdit, async (req: Request, res: Response) => {
+router.post("/records/:definitionId/import", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const definitionId = Number(req.params.definitionId);
   if (!Number.isInteger(definitionId)) {
     res.status(400).json({ error: "Invalid id" });
@@ -645,7 +663,7 @@ function formatValue(v: unknown): string {
 }
 
 // ---- Images ----------------------------------------------------------------
-router.get("/records/:id/images", async (req: Request, res: Response) => {
+router.get("/records/:id/images", requireAuth, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });
@@ -668,7 +686,7 @@ router.get("/records/:id/images", async (req: Request, res: Response) => {
   res.json({ images });
 });
 
-router.post("/records/:id/images", requireEdit, async (req: Request, res: Response) => {
+router.post("/records/:id/images", requireAuth, requireEdit, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Invalid id" });

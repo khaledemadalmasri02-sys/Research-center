@@ -15,7 +15,6 @@ import { reportsApp } from "../src/routes/reports";
 import { gdprApp } from "../src/routes/gdpr";
 import { ingestApp } from "../src/routes/ingest";
 import { searchApp, savedViewsApp } from "../src/routes/search";
-import { auditApp } from "../src/routes/audit";
 
 export interface FakeResponse {
   results?: any[];
@@ -83,7 +82,6 @@ export function makeApp() {
   app.route("/api/ingest", ingestApp);
   app.route("/api/search", searchApp);
   app.route("/api/saved-views", savedViewsApp);
-  app.route("/api/audit", auditApp);
   return app;
 }
 

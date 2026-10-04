@@ -14,75 +14,146 @@ import {
   GetPatientStatsResponse,
 } from "@workspace/api-zod";
 import { s3Client, ObjectStorageService } from "../lib/objectStorage";
+// Reuse the storage router's guarded S3 helpers instead of re-implementing
+// them: `isSafePatientIdForPrefix` blocks prefix injection,
+// `listAllObjectsUnderPrefix` paginates with a ContinuationToken (no silent
+// 1000-key truncation), and `radiologyPatientPrefix` keeps one canonical
+// per-patient prefix.
+import {
+  discoverImagesByPatientId,
+  isSafePatientIdForPrefix,
+  listAllObjectsUnderPrefix,
+  radiologyPatientPrefix,
+} from "./storage";
 import { radiologyImageService } from "../lib/radiologyImages";
-import { PutObjectCommand, ListObjectsV2Command } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { randomUUID } from "node:crypto";
 import { writeAudit, clientIp } from "../lib/audit";
+import { logger } from "../lib/logger";
+import { requireEdit } from "../middlewares/requireEdit";
+import { requireAdmin } from "../middlewares/requireAdmin";
+// Every route in this file is session-gated explicitly. `requireAuth` runs
+// BEFORE `requireEdit`/`requireAdmin` so an unauthenticated caller still gets
+// 401 (not the 403 those two would produce on their own).
+import { requireAuth } from "./auth";
 
 // ---- SSRF guard (shared, see lib/ssrf.ts) -----------------------------------
 import { safeFetch } from "../lib/ssrf";
-import { validate, z } from "../lib/validate";
+import { validate, validationErrorBody, z } from "../lib/validate";
 
 const router: IRouter = Router();
 const objectStorageService = new ObjectStorageService();
 
-async function discoverImagesByPatientId(patientId: string | undefined): Promise<string[]> {
-  if (!patientId) return [];
-  const bucket = objectStorageService.getBucket();
-  
-  const allKeys: string[] = [];
-  const normalizedId = patientId.replace(/^PAT/, '');
-  
-  try {
-    const response = await s3Client.send(new ListObjectsV2Command({
-      Bucket: bucket,
-      Prefix: `radiology/`,
-    }));
-    
-    for (const obj of response.Contents ?? []) {
-      if (!obj.Key) continue;
-      
-      const hasPatPrefix = obj.Key.includes(`patient_${patientId}_`) || obj.Key.includes(`patient_PAT${normalizedId}_`);
-      const hasNumericOnly = obj.Key.includes(`patient_${normalizedId}_`);
-      
-      if (hasPatPrefix || hasNumericOnly || obj.Key.includes(`patient_${normalizedId}.`)) {
-        if (!allKeys.includes(obj.Key)) {
-          allKeys.push(obj.Key);
-        }
-      }
-      
-      const timestampMatch = obj.Key.match(new RegExp(`-patient_([^_]+)`, 'i'));
-      if (timestampMatch?.[1]) {
-        const filePatientId = timestampMatch[1];
-        if (filePatientId === patientId || filePatientId === normalizedId) {
-          if (!allKeys.includes(obj.Key)) {
-            allKeys.push(obj.Key);
-          }
-        }
-      }
-    }
-    
-    return allKeys;
-  } catch {
-    return [];
-  }
+// How many prefix-scoped S3 LISTs may be in flight at once during a batch
+// discovery. `GET /api/patients` returns up to 100 patients; without a cap a
+// single request used to fire 100 concurrent full-prefix LISTs.
+const DISCOVERY_CONCURRENCY = 8;
+
+/**
+ * Keys written by the upload/import paths look like
+ * `radiology/<timestamp>-patient_<id>_<uuid>.<ext>` — the patient id is an
+ * infix there, so it cannot be reached with an S3 prefix filter. That legacy
+ * layout is why one shared full-prefix listing still exists below; the
+ * canonical `radiology/patient_<id>/...` form IS prefix-scoped.
+ */
+function patientIdFromKey(key: string): string | null {
+  const m = /(?:^|[/_-])patient_(\d+)(?:[/_.-]|$)/i.exec(key);
+  return m ? m[1]! : null;
 }
 
-async function serializePatientWithImages<T extends { createdAt: Date | string; updatedAt: Date | string; patientId?: string; radiologyImageFilePathOrLink?: string | null; radiologyImages?: string | null }>(p: T): Promise<any> {
+/**
+ * Discover image keys for many patients with ONE hoisted listing pass.
+ *
+ * The previous implementation listed the ENTIRE `radiology/` prefix once per
+ * patient from inside the response serializer, with no ContinuationToken: a
+ * `GET /api/patients` with limit=100 fired 100 concurrent full-prefix LISTs
+ * and silently dropped every key past the first 1000.
+ *
+ * Now:
+ *   - one shared, paginated `radiology/` listing indexes the legacy
+ *     `<ts>-patient_<id>_...` keys, at most once per request,
+ *   - one prefix-scoped listing per patient covers the canonical
+ *     `radiology/patient_<id>/...` layout, with bounded concurrency.
+ *
+ * S3 errors are caught per patient (logged, treated as "no images") so a
+ * storage outage degrades the list response instead of failing it entirely.
+ */
+async function discoverImagesForPatients(
+  patientIds: Array<string | null | undefined>,
+): Promise<Map<string, string[]>> {
+  const ids = Array.from(
+    new Set(
+      patientIds
+        .map((id) => (typeof id === "string" ? id.replace(/^PAT/i, "") : ""))
+        .filter((id) => id.length > 0 && isSafePatientIdForPrefix(id)),
+    ),
+  );
+  const out = new Map<string, string[]>();
+  for (const id of ids) out.set(id, []);
+
+  if (ids.length === 0) return out;
+
+  let bucket: string;
+  try {
+    bucket = objectStorageService.getBucket();
+  } catch {
+    return out;
+  }
+
+  // 1. Shared legacy-layout pass: one listing for the whole request.
+  try {
+    for (const key of await listAllObjectsUnderPrefix(bucket, "radiology/")) {
+      const id = patientIdFromKey(key);
+      if (!id) continue;
+      const forId = out.get(id);
+      if (!forId) continue;
+      if (!key.startsWith(`${radiologyPatientPrefix(id)}_`)) forId.push(key);
+    }
+  } catch (err) {
+    logger.warn({ err }, "patients: legacy image discovery listing failed");
+  }
+
+  // 2. Canonical per-patient prefix pass, bounded concurrency.
+  let cursor = 0;
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      const index = cursor++;
+      if (index >= ids.length) return;
+      const id = ids[index]!;
+      try {
+        const forId = out.get(id)!;
+        for (const key of await discoverImagesByPatientId(id)) {
+          if (!forId.includes(key)) forId.push(key);
+        }
+      } catch (err) {
+        logger.warn({ err, patientId: id }, "patients: image discovery failed");
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(DISCOVERY_CONCURRENCY, ids.length) }, () => worker()),
+  );
+
+  return out;
+}
+
+/**
+ * Pure response shaper: no I/O, no writes. Image discovery is hoisted into
+ * the route handlers and passed in as `discoveredImages`.
+ */
+async function serializePatientWithImages<T extends { createdAt: Date | string; updatedAt: Date | string; patientId?: string; radiologyImageFilePathOrLink?: string | null; radiologyImages?: string | null }>(p: T, discoveredImages?: string[]): Promise<any> {
   const base = {
     ...p,
     createdAt: p.createdAt instanceof Date ? p.createdAt.toISOString() : p.createdAt,
     updatedAt: p.updatedAt instanceof Date ? p.updatedAt.toISOString() : p.updatedAt,
   };
 
-  if ((!base.radiologyImageFilePathOrLink || !base.radiologyImages) && base.patientId) {
-    const discoveredImages = await discoverImagesByPatientId(base.patientId);
-    if (discoveredImages.length > 0) {
-      if (!base.radiologyImageFilePathOrLink) {
-        (base as any).radiologyImageFilePathOrLink = discoveredImages[0];
-      }
-      if (!base.radiologyImages) {
-        (base as any).radiologyImages = JSON.stringify(discoveredImages);
-      }
+  if (discoveredImages && discoveredImages.length > 0 && base.patientId && (!base.radiologyImageFilePathOrLink || !base.radiologyImages)) {
+    if (!base.radiologyImageFilePathOrLink) {
+      (base as any).radiologyImageFilePathOrLink = discoveredImages[0];
+    }
+    if (!base.radiologyImages) {
+      (base as any).radiologyImages = JSON.stringify(discoveredImages);
     }
   }
 
@@ -121,29 +192,48 @@ function preprocess(body: unknown): Record<string, unknown> {
   return out;
 }
 
-async function discoverImagesByImageId(imageId: string): Promise<string[]> {
-  if (!imageId) return [];
-  const bucket = objectStorageService.getBucket();
-  
-  const allKeys: string[] = [];
-  
+/**
+ * Prefix-scoped discovery for a caller-supplied id that may be free-form
+ * (e.g. "B-1" from a spreadsheet import, or a "PAT42" spelling).
+ *
+ * `discoverImagesByPatientId` throws for anything that is not digit-only,
+ * because a non-numeric id cannot be turned into a safe S3 prefix. Batch
+ * imports must not fail wholesale because of that, so an unsafe id simply has
+ * no discoverable images and S3 errors degrade to "no images" with a warning.
+ */
+async function discoverImagesForFreeFormId(rawId: string | undefined): Promise<string[]> {
+  if (!rawId) return [];
+  const id = rawId.replace(/^PAT/i, "");
+  if (!isSafePatientIdForPrefix(id)) return [];
   try {
-    const response = await s3Client.send(new ListObjectsV2Command({
-      Bucket: bucket,
-      Prefix: `radiology/`,
-    }));
-    
-    for (const obj of response.Contents ?? []) {
-      if (obj.Key && obj.Key.includes(`patient_${imageId}_`)) {
-        allKeys.push(obj.Key);
-      }
-    }
-    
-    return allKeys;
-  } catch {
+    return await discoverImagesByPatientId(id);
+  } catch (err) {
+    logger.warn({ err, patientId: rawId }, "patients: image discovery failed");
     return [];
   }
 }
+
+/**
+ * Legacy helper: keys matching `patient_<imageId>_` anywhere under
+ * `radiology/`. Kept for the batch-import path, which passes a free-form
+ * `imageId`. Uses the shared paginated helper (no silent 1000-key
+ * truncation) and filters locally, because the id is an infix in the legacy
+ * key layout and therefore not prefix-addressable.
+ */
+async function discoverImagesByImageId(imageId: string): Promise<string[]> {
+  if (!imageId || !isSafePatientIdForPrefix(imageId)) return [];
+  const bucket = objectStorageService.getBucket();
+  const marker = `patient_${imageId}_`;
+  try {
+    return (await listAllObjectsUnderPrefix(bucket, "radiology/")).filter((key) =>
+      key.includes(marker),
+    );
+  } catch (err) {
+    logger.warn({ err, imageId }, "patients: imageId discovery failed");
+    return [];
+  }
+}
+
 
 /** Coerce/sanitise patient data so type mismatches from Excel imports never
  *  reach the DB.  Any field that can't be coerced is dropped (set to null). */
@@ -182,10 +272,49 @@ function sanitize(data: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-router.get("/patients", async (req, res): Promise<void> => {
+const AddImagesBody = z
+  .object({
+    imageId: z.string().min(1).max(64).optional(),
+    objectKey: z.string().min(1).max(512).optional(),
+    objectKeys: z.array(z.string().min(1).max(512)).max(50).optional(),
+    studyId: z.string().min(1).max(64).nullable().optional(),
+  })
+  .refine(
+    (v) => Boolean(v.imageId) || Boolean(v.objectKey) || (Array.isArray(v.objectKeys) && v.objectKeys.length > 0),
+    { message: "imageId, objectKey, or objectKeys is required" },
+  );
+
+const DeleteImageParams = z.object({
+  id: z.coerce.number().int().positive(),
+  imageId: z.coerce.number().int().positive(),
+});
+
+const DeleteImageQuery = z
+  .object({
+    deleteObject: z
+      .union([z.literal("true"), z.literal("false"), z.literal("1"), z.literal("0")])
+      .optional(),
+  });
+
+const DeleteImageBody = z
+  .object({
+    deleteObject: z.boolean().optional(),
+  })
+  .optional();
+
+const BatchImportImagesBody = z.object({
+  patientId: z.string().min(1).max(64),
+  imageUrls: z.array(z.string().url().max(2048)).min(1).max(50),
+});
+
+const BatchImportBody = z.object({
+  patients: z.array(z.record(z.string(), z.unknown())).min(1).max(500),
+});
+
+router.get("/patients", requireAuth, async (req, res): Promise<void> => {
   const parsed = ListPatientsQueryParams.safeParse(req.query);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    res.status(400).json(validationErrorBody(parsed.error, "query"));
     return;
   }
 
@@ -216,20 +345,36 @@ router.get("/patients", async (req, res): Promise<void> => {
     .limit(limit ?? 100)
     .offset(offset ?? 0);
 
+  // The count must use the SAME conditions as the page query, otherwise
+  // `total` counts the caller's whole patient book while `patients` holds a
+  // filtered page — which breaks pagination for every filtered request
+  // (and made `GET /api/patients?search=X` report the unfiltered total).
   const total = await db
     .select({ count: sql<number>`count(*)::int` })
     .from(patientsTable)
-    .where(eq(patientsTable.userId, req.session?.userId ?? 0))
+    .where(and(...conditions))
     .then((r) => r[0]?.count ?? 0);
 
-  res.json(ListPatientsResponse.parse({ patients: await Promise.all(patients.map(serializePatientWithImages)), total }));
+  // Hoisted image discovery: ONE batched pass for the whole page instead of
+  // a full-prefix S3 LIST per patient inside the serializer.
+  const discovered = await discoverImagesForPatients(patients.map((p) => p.patientId));
+  const serialized = await Promise.all(
+    patients.map((p) =>
+      serializePatientWithImages(
+        p,
+        p.patientId ? discovered.get(p.patientId.replace(/^PAT/i, "")) : undefined,
+      ),
+    ),
+  );
+
+  res.json(ListPatientsResponse.parse({ patients: serialized, total }));
 });
 
-router.post("/patients", async (req, res): Promise<void> => {
+router.post("/patients", requireAuth, requireEdit, async (req, res): Promise<void> => {
   const parsed = CreatePatientBody.safeParse(preprocess(req.body));
   if (!parsed.success) {
-    req.log.warn({ errors: parsed.error.message }, "Invalid request body");
-    res.status(400).json({ error: parsed.error.message });
+    req.log.warn({ errors: parsed.error.issues }, "Invalid request body");
+    res.status(400).json(validationErrorBody(parsed.error, "body"));
     return;
   }
 
@@ -249,7 +394,7 @@ router.post("/patients", async (req, res): Promise<void> => {
   res.status(201).json(GetPatientResponse.parse(await serializePatientWithImages(patient!)));
 });
 
-router.get("/patients/stats", async (req, res): Promise<void> => {
+router.get("/patients/stats", requireAuth, async (req, res): Promise<void> => {
   // Patients are private: stats reflect only the current user's patients.
   const allPatients: any[] = await db
     .select()
@@ -321,10 +466,10 @@ router.get("/patients/stats", async (req, res): Promise<void> => {
   );
 });
 
-router.get("/patients/:id", async (req, res): Promise<void> => {
+router.get("/patients/:id", requireAuth, async (req, res): Promise<void> => {
   const params = GetPatientParams.safeParse(req.params);
   if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+    res.status(400).json(validationErrorBody(params.error, "params"));
     return;
   }
 
@@ -338,37 +483,88 @@ router.get("/patients/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  if ((!patient.radiologyImageFilePathOrLink || !patient.radiologyImages) && patient.patientId) {
-    const discoveredImages = await discoverImagesByPatientId(patient.patientId);
-    if (discoveredImages.length > 0) {
-      const updateData: Record<string, any> = {};
-      if (!patient.radiologyImageFilePathOrLink) {
-        updateData.radiologyImageFilePathOrLink = discoveredImages[0];
-      }
-      if (!patient.radiologyImages) {
-        updateData.radiologyImages = JSON.stringify(discoveredImages);
-      }
-      if (Object.keys(updateData).length > 0) {
-        await db
-          .update(patientsTable)
-          .set(updateData)
-          .where(eq(patientsTable.id, params.data.id));
-      }
-    }
-  }
+  // A11: this GET used to run an `UPDATE patients SET radiologyImage...`
+  // whenever the image columns were empty, i.e. a read request wrote to the
+  // PHI table (twice over: the UPDATE plus a second SELECT). It is now a
+  // pure read. Legacy rows whose image columns were never populated are
+  // persisted by the explicit admin-only migration endpoint below
+  // (`POST /api/admin/patients/backfill-images`).
+  const discoveredImages =
+    patient.patientId && (!patient.radiologyImageFilePathOrLink || !patient.radiologyImages)
+      ? (await discoverImagesForPatients([patient.patientId])).get(
+          patient.patientId.replace(/^PAT/i, ""),
+        )
+      : undefined;
 
-  const [updatedPatient] = await db
-    .select()
-    .from(patientsTable)
-    .where(eq(patientsTable.id, params.data.id));
-
-  res.json(GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)));
+  res.json(
+    GetPatientResponse.parse(
+      await serializePatientWithImages(patient, discoveredImages),
+    ),
+  );
 });
 
-router.get("/patients/:id/images", async (req, res): Promise<void> => {
+/**
+ * A11: the backfill that used to happen inside `GET /api/patients/:id`,
+ * promoted to an explicit, admin-only, auditable migration endpoint.
+ *
+ * Discovers S3 image keys for patients whose `radiology_images` /
+ * `radiology_image_file_path_or_link` columns are empty and persists them.
+ * Requires admin (an operator action that rewrites rows for every user), is
+ * rate-limited implicitly by requireAdmin, and writes an audit entry per run.
+ */
+router.post(
+  "/admin/patients/backfill-images",
+  requireAuth,
+  requireAdmin,
+  requireEdit,
+  async (req: Request, res: Response): Promise<void> => {
+    const patients = await db
+      .select({
+        id: patientsTable.id,
+        patientId: patientsTable.patientId,
+        radiologyImages: patientsTable.radiologyImages,
+        radiologyImageFilePathOrLink: patientsTable.radiologyImageFilePathOrLink,
+      })
+      .from(patientsTable)
+      .where(
+        sql`("radiology_images" IS NULL OR "radiology_images" = '') OR ("radiology_image_file_path_or_link" IS NULL OR "radiology_image_file_path_or_link" = '')`,
+      )
+      .limit(500);
+
+    const discovered = await discoverImagesForPatients(
+      patients.map((p) => p.patientId),
+    );
+
+    let updated = 0;
+    for (const p of patients) {
+      const keys = discovered.get(p.patientId.replace(/^PAT/i, "")) ?? [];
+      if (keys.length === 0) continue;
+      const updateData: Record<string, unknown> = {};
+      if (!p.radiologyImageFilePathOrLink) updateData.radiologyImageFilePathOrLink = keys[0];
+      if (!p.radiologyImages) updateData.radiologyImages = JSON.stringify(keys);
+      if (Object.keys(updateData).length === 0) continue;
+      await db
+        .update(patientsTable)
+        .set(updateData)
+        .where(eq(patientsTable.id, p.id));
+      updated++;
+    }
+
+    await writeAudit({
+      userId: req.session?.userId ?? null,
+      action: "patient.backfill_images",
+      detail: { scanned: patients.length, updated },
+      ip: clientIp(req),
+    });
+
+    res.json({ scanned: patients.length, updated });
+  },
+);
+
+router.get("/patients/:id/images", requireAuth, async (req, res): Promise<void> => {
   const params = GetPatientParams.safeParse(req.params);
   if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+    res.status(400).json(validationErrorBody(params.error, "params"));
     return;
   }
 
@@ -386,7 +582,7 @@ router.get("/patients/:id/images", async (req, res): Promise<void> => {
   res.json({ patientId: patient.patientId, images });
 });
 
-router.post("/patients/:id/images", validate({ params: GetPatientParams, body: AddImagesBody }), async (req, res): Promise<void> => {
+router.post("/patients/:id/images", requireAuth, requireEdit, validate({ params: GetPatientParams, body: AddImagesBody }), async (req, res): Promise<void> => {
   const params = GetPatientParams.parse(req.params);
   const body = req.validated?.body as z.infer<typeof AddImagesBody>;
 
@@ -408,7 +604,7 @@ router.post("/patients/:id/images", validate({ params: GetPatientParams, body: A
   } else if (typeof objectKey === "string" && objectKey) {
     keys = [objectKey];
   } else if (typeof imageId === "string" && imageId) {
-    keys = await discoverImagesByPatientId(imageId);
+    keys = await discoverImagesForFreeFormId(imageId);
   }
 
   if (keys.length === 0) {
@@ -427,14 +623,24 @@ router.post("/patients/:id/images", validate({ params: GetPatientParams, body: A
     .from(patientsTable)
     .where(eq(patientsTable.id, params.id));
 
+  // Hoisted, one batched pass for this single patient (no S3 LIST inside the
+  // serializer).
+  const discovered = await discoverImagesForPatients([updatedPatient!.patientId]);
   res.json({
-    ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
+    ...GetPatientResponse.parse(
+      await serializePatientWithImages(
+        updatedPatient!,
+        discovered.get(updatedPatient!.patientId.replace(/^PAT/i, "")),
+      ),
+    ),
     images,
   });
 });
 
 router.delete(
   "/patients/:id/images/:imageId",
+  requireAuth,
+  requireEdit,
   validate({ params: DeleteImageParams, query: DeleteImageQuery, body: DeleteImageBody }),
   async (req, res): Promise<void> => {
     const params = DeleteImageParams.parse(req.params);
@@ -462,24 +668,36 @@ router.delete(
       .from(patientsTable)
       .where(eq(patientsTable.id, params.id));
 
+    const discovered = await discoverImagesForPatients([updatedPatient!.patientId]);
     res.json({
-      ...GetPatientResponse.parse(await serializePatientWithImages(updatedPatient!)),
+      ...GetPatientResponse.parse(
+        await serializePatientWithImages(
+          updatedPatient!,
+          discovered.get(updatedPatient!.patientId.replace(/^PAT/i, "")),
+        ),
+      ),
       images,
     });
   },
 );
 
-router.patch("/patients/:id", async (req, res): Promise<void> => {
+router.patch("/patients/:id", requireAuth, requireEdit, async (req, res): Promise<void> => {
   const params = UpdatePatientParams.safeParse(req.params);
   if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+    res.status(400).json(validationErrorBody(params.error, "params"));
     return;
   }
 
   const parsed = UpdatePatientBody.safeParse(preprocess(req.body));
   if (!parsed.success) {
-    req.log.warn({ errors: parsed.error.message }, "Invalid update body");
-    res.status(400).json({ error: parsed.error.message });
+    req.log.warn({ errors: parsed.error.issues }, "Invalid update body");
+    res.status(400).json(
+      validationErrorBody(
+        parsed.error,
+        "body",
+        parsed.error.issues[0]?.message ?? "No updatable fields in request body.",
+      ),
+    );
     return;
   }
 
@@ -488,6 +706,20 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
   );
   // Never allow the owner (userId) to be changed via an update payload.
   delete updateData.userId;
+
+  // A payload whose every field was dropped by sanitisation (e.g. `{}`, or
+  // only nulls) leaves nothing to write. drizzle throws "No values to set" in
+  // that case, which surfaced as a 500 on client input.
+  if (Object.keys(updateData).length === 0) {
+    res.status(400).json(
+      validationErrorBody(
+        { issues: [{ path: [], message: "No updatable fields in request body." }] },
+        "body",
+        "No updatable fields in request body.",
+      ),
+    );
+    return;
+  }
 
   const [patient] = await db
     .update(patientsTable)
@@ -513,6 +745,8 @@ router.patch("/patients/:id", async (req, res): Promise<void> => {
 
 router.post(
   "/patients/batch-import-images",
+  requireAuth,
+  requireEdit,
   validate({ body: BatchImportImagesBody }),
   async (req: Request, res: Response): Promise<void> => {
     const { patientId, imageUrls } = req.validated!.body as z.infer<typeof BatchImportImagesBody>;
@@ -575,10 +809,10 @@ router.post(
   }
 });
 
-router.delete("/patients/:id", async (req, res: Response): Promise<void> => {
+router.delete("/patients/:id", requireAuth, requireEdit, async (req, res: Response): Promise<void> => {
   const params = DeletePatientParams.safeParse(req.params);
   if (!params.success) {
-    res.status(400).json({ error: params.error.message });
+    res.status(400).json(validationErrorBody(params.error, "params"));
     return;
   }
 
@@ -623,6 +857,8 @@ function guessExtension(url: string, contentType: string | null): string {
 
 router.post(
   "/patients/batch",
+  requireAuth,
+  requireEdit,
   validate({ body: BatchImportBody }),
   async (req: Request, res: Response): Promise<void> => {
     const { patients } = req.validated!.body as z.infer<typeof BatchImportBody>;
@@ -647,7 +883,7 @@ router.post(
             updatedPaths.push(newPath);
           }
         } else if (processed.patientId && !processed.radiologyImageFilePathOrLink) {
-          const existing = await discoverImagesByPatientId(processed.patientId as string);
+          const existing = await discoverImagesForFreeFormId(processed.patientId as string);
           if (existing.length > 0) {
             processed.radiologyImageFilePathOrLink = existing[0];
             updatedPaths.push(...existing);
@@ -731,45 +967,6 @@ const FETCH_TIMEOUT_MS = 15_000;
 // Only these image MIME types are accepted; SVG/XML are rejected to prevent XSS.
 const ALLOWED_IMAGE_CONTENT_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
-const AddImagesBody = z
-  .object({
-    imageId: z.string().min(1).max(64).optional(),
-    objectKey: z.string().min(1).max(512).optional(),
-    objectKeys: z.array(z.string().min(1).max(512)).max(50).optional(),
-    studyId: z.string().min(1).max(64).nullable().optional(),
-  })
-  .refine(
-    (v) => Boolean(v.imageId) || Boolean(v.objectKey) || (Array.isArray(v.objectKeys) && v.objectKeys.length > 0),
-    { message: "imageId, objectKey, or objectKeys is required" },
-  );
-
-const DeleteImageParams = z.object({
-  id: z.coerce.number().int().positive(),
-  imageId: z.coerce.number().int().positive(),
-});
-
-const DeleteImageQuery = z
-  .object({
-    deleteObject: z
-      .union([z.literal("true"), z.literal("false"), z.literal("1"), z.literal("0")])
-      .optional(),
-  });
-
-const DeleteImageBody = z
-  .object({
-    deleteObject: z.boolean().optional(),
-  })
-  .optional();
-
-const BatchImportImagesBody = z.object({
-  patientId: z.string().min(1).max(64),
-  imageUrls: z.array(z.string().url().max(2048)).min(1).max(50),
-});
-
-const BatchImportBody = z.object({
-  patients: z.array(z.record(z.string(), z.unknown())).min(1).max(500),
-});
-
 async function fetchAndUploadImage(url: string, patientId: string | undefined, patientName: string | undefined): Promise<string | null> {
   let parsed: URL;
   try {
@@ -800,7 +997,7 @@ async function fetchAndUploadImage(url: string, patientId: string | undefined, p
 
     const ext = guessExtension(url, contentType);
     const baseName = patientId ? `patient_${patientId}` : "imported";
-    const objectId = `${Date.now()}-${baseName}_${Math.random().toString(36).substring(2, 8)}.${ext}`;
+    const objectId = `${Date.now()}-${baseName}_${randomUUID()}.${ext}`;
     const objectKey = `radiology/${objectId}`;
 
     const bucket = objectStorageService.getBucket();

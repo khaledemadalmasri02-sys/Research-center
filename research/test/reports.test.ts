@@ -7,6 +7,27 @@ vi.mock("../src/lib/security", () => ({
   getAuthUser: vi.fn(),
   isAdmin: (u: any) => !!u?.canAdminAccess,
   canEdit: (u: any) => !!u && (u.canAdminAccess || u.role === "editor" || u.role === "admin"),
+  requirePatientScope: (_c: any, u: any) =>
+    !!u && (u.canAdminAccess || u.role === "editor" || u.role === "admin")
+      ? null
+      : new Response("Forbidden", { status: 403 }),
+  loadScopedRecord: async (c: any, recordId: number, user: any) => {
+    const admin = !!user?.canAdminAccess;
+    const stmt = admin
+      ? c.env.DB.prepare("SELECT * FROM records WHERE id = ?").bind(recordId)
+      : c.env.DB
+          .prepare("SELECT * FROM records WHERE id = ? AND user_id = ?")
+          .bind(recordId, user?.id ?? -1);
+    const rec = await stmt.first();
+    if (!rec) return null;
+    let data: any = {};
+    try {
+      data = typeof rec.data === "string" ? JSON.parse(rec.data) : rec.data;
+    } catch {
+      data = {};
+    }
+    return { id: rec.id, data };
+  },
   writeAudit: vi.fn(),
   hashPassword: (p: string) => p,
   verifyPassword: () => true,
@@ -44,8 +65,8 @@ describe("reports routes", () => {
     db.calls = [];
   });
 
-  it("returns a PDF for a patient (auth)", async () => {
-    auth.mockResolvedValue({ user: viewerUser });
+  it("returns a PDF for a patient (editor)", async () => {
+    auth.mockResolvedValue({ user: editorUser });
     db.responder = (sql) => {
       if (sql.startsWith("SELECT * FROM consents WHERE patient_id")) {
         return { results: [{ consent_version_id: 1, status: "signed", signed_at: "2024-01-01", withdrawn_at: null }] };
@@ -64,6 +85,40 @@ describe("reports routes", () => {
     const buf = await res.arrayBuffer();
     const head = new TextDecoder().decode(new Uint8Array(buf).slice(0, 8));
     expect(head).toBe("%PDF-1.4");
+    expect(res.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("denies the patient PDF to a viewer (no owner column to scope against)", async () => {
+    auth.mockResolvedValue({ user: viewerUser });
+    const res = await app.request("/api/reports/patient/5/pdf", { method: "GET" }, env);
+    expect(res.status).toBe(403);
+  });
+
+  it("400s on a non-numeric patient id", async () => {
+    auth.mockResolvedValue({ user: adminUser });
+    const res = await app.request("/api/reports/patient/abc/pdf", { method: "GET" }, env);
+    expect(res.status).toBe(400);
+  });
+
+  it("only marks a FULLY de-identified image as [deid]", async () => {
+    auth.mockResolvedValue({ user: editorUser });
+    db.responder = (sql) => {
+      if (sql.includes("FROM dicom_images WHERE patient_id")) {
+        return {
+          results: [
+            { modality: "CT", study_instance_uid: "s1", is_deidentified: 0 },
+            { modality: "MR", study_instance_uid: "s2", is_deidentified: 1 },
+            { modality: "US", study_instance_uid: "s3", is_deidentified: 2 },
+          ],
+        };
+      }
+      return { results: [] };
+    };
+    const res = await app.request("/api/reports/patient/5/pdf", { method: "GET" }, env);
+    const text = new TextDecoder().decode(await res.arrayBuffer());
+    // A metadata-only scrub (state 1) must NOT print "[deid]".
+    expect(text).toContain("PIXELS NOT SCRUBBED");
+    expect(text).toMatch(/US s3 \[deid\]/);
   });
 });
 
@@ -80,17 +135,12 @@ describe("GDPR routes", () => {
     db.calls = [];
   });
 
-  it("cascades erasure across patient-scoped tables (admin)", async () => {
-    auth.mockResolvedValue({ user: adminUser });
-    db.responder = (sql) => {
-      if (sql.startsWith("DELETE FROM")) return { changes: 2 };
-      return {};
-    };
-    const res = await app.request("/api/gdpr/erasure/5", { method: "DELETE" }, env);
-    const body = await res.json();
-    expect(res.status).toBe(200);
-    expect(body.deletedRows).toBe(8); // 2 per table × 4 tables
-  });
+  // NOTE: the cross-store erasure behaviour (D1 + object storage + Postgres,
+  // per-store counts, partial-failure pending marker) is covered in
+  // test/gdpr.test.ts. The old assertion here
+  // (`ok:true, deletedRows: 8` from four D1 tables) encoded exactly the
+  // false-completion this fix removed: it passed while the real PHI store
+  // (Postgres) and every radiology object in S3/MinIO were untouched.
 
   it("rejects erasure for non-admin (403)", async () => {
     auth.mockResolvedValue({ user: editorUser });

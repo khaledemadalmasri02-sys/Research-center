@@ -16,11 +16,53 @@ import {
   ObjectAclPolicy,
   ObjectPermission,
   getObjectAclPolicy,
-  ObjectAccessGroup,
+  createObjectAccessGroup,
 } from "./objectAcl";
 
 const DEFAULT_S3_REGION = "us-east-1";
 const DEFAULT_SIGNED_URL_EXPIRES_SECONDS = 300;
+
+// S3 keys are limited to 1024 bytes by the API. Anything longer is a sign of
+// a probing/DoS attempt rather than a real object name.
+const MAX_S3_KEY_LENGTH = 1024;
+
+/**
+ * Join `prefix` + caller-supplied `filePath` and refuse anything that escapes
+ * the prefix.
+ *
+ * Threat model: `filePath` comes straight off the URL. `../../backups/dump.sql`
+ * and `/backups/dump.sql` both used to escape `/mednexus` and resolve to an
+ * arbitrary key in the bucket (which also holds `backups/*.sql` full database
+ * dumps). Rules:
+ *   1. `filePath` must be relative (no leading `/`) and bounded in length,
+ *   2. `.`/`..` segments are rejected outright rather than normalised away,
+ *   3. the final key must still start with `<prefix>/` after normalisation.
+ *
+ * Returns the `/<bucket>/<key>` form `parseObjectPath` expects, or `null`.
+ */
+export function resolveKeyWithinPrefix(prefix: string, filePath: string): string | null {
+  const cleanPrefix = prefix.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!cleanPrefix) return null;
+  if (!filePath || filePath.length > MAX_S3_KEY_LENGTH) return null;
+  // Absolute keys and NUL bytes are never legitimate here.
+  if (filePath.startsWith("/") || filePath.includes("\0")) return null;
+
+  const segments = filePath.split("/");
+  const out: string[] = [];
+  for (const segment of segments) {
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") return null; // traversal attempt
+    out.push(segment);
+  }
+  if (out.length === 0) return null;
+
+  const key = `${cleanPrefix}/${out.join("/")}`;
+  if (key.length > MAX_S3_KEY_LENGTH) return null;
+  // Belt and braces: the resolved key must still be inside the prefix.
+  if (!key.startsWith(`${cleanPrefix}/`)) return null;
+  // `/<key>` — the shape `parseObjectPath` expects for a bucket-less path.
+  return `/${key}`;
+}
 
 // Legacy read-path env vars. New code writes only to
 // <bucket>/radiology/<object-id>; the env vars below are kept so a
@@ -181,10 +223,23 @@ export class ObjectStorageService {
     }
   }
 
+  /**
+   * Look up `filePath` under each configured public search path.
+   *
+   * This helper used to build `${searchPath}/${filePath}` and hand it
+   * straight to `parseObjectPath`, which meant a caller-supplied
+   * `../../backups/x.sql` or a leading `/` resolved to an arbitrary key in
+   * the bucket — the same bucket that holds full `pg_dump` database dumps.
+   * The final key is now re-validated after normalisation: it must still sit
+   * inside the configured search path, must not be absolute, must not
+   * traverse, and must respect a key-length bound.
+   */
   async searchPublicObject(filePath: string): Promise<S3Object | null> {
     for (const searchPath of this.publicSearchPaths) {
-      const fullPath = `${searchPath}/${filePath}`;
-      const { bucketName, key } = this.parseObjectPath(fullPath);
+      const resolved = resolveKeyWithinPrefix(searchPath, filePath);
+      if (!resolved) continue;
+
+      const { bucketName, key } = this.parseObjectPath(resolved);
       const exists = await this.objectExists(bucketName, key);
       if (exists) {
         return { bucketName, key };
@@ -465,8 +520,10 @@ export class ObjectStorageService {
     }
 
     for (const rule of aclPolicy.aclRules || []) {
-      const accessGroup = createObjectAccessGroup(rule.group);
+      const accessGroup = createObjectAccessGroup(rule?.group);
+      // Unresolvable group type ⇒ the rule grants nothing (fail closed).
       if (
+        accessGroup &&
         (await accessGroup.hasMember(userId)) &&
         isPermissionAllowed(permission, rule.permission)
       ) {
@@ -502,20 +559,11 @@ function isPermissionAllowed(
   return granted === ObjectPermission.WRITE;
 }
 
-abstract class BaseObjectAccessGroup implements ObjectAccessGroup {
-  constructor(
-    public readonly type: ObjectAccessGroupType,
-    public readonly id: string,
-  ) {}
-
-  public abstract hasMember(userId: string): Promise<boolean>;
-}
-
-export enum ObjectAccessGroupType {}
-
-function createObjectAccessGroup(group: ObjectAccessGroup): BaseObjectAccessGroup {
-  switch (group.type) {
-    default:
-      throw new Error(`Unknown access group type: ${group.type}`);
-  }
-}
+// NOTE: this file used to declare its own copy of `ObjectAccessGroupType` +
+// `createObjectAccessGroup` (duplicating lib/objectAcl.ts) whose factory
+// threw on every group type. Both now live in lib/objectAcl.ts, which fails
+// closed (`null` = rule grants nothing) instead of throwing, so the
+// `canAccessObjectEntity` ACL branch above degrades safely. Re-exported for
+// backwards compatibility with any existing import path.
+export { ObjectAccessGroupType, createObjectAccessGroup } from "./objectAcl";
+export type { ObjectAccessGroup } from "./objectAcl";
