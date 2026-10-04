@@ -16,12 +16,7 @@
  */
 
 import { Pool } from "pg";
-import {
-  S3Client,
-  PutObjectCommand,
-  HeadObjectCommand,
-} from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { S3Client, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { randomUUID } from "crypto";
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -77,7 +72,10 @@ async function objectExists(bucket: string, key: string): Promise<boolean> {
   }
 }
 
-async function uploadImage(base64Data: string, bucket: string): Promise<{ key: string; etag: string } | null> {
+async function uploadImage(
+  base64Data: string,
+  bucket: string,
+): Promise<{ key: string; etag: string } | null> {
   const buffer = decodeBase64Image(base64Data);
   if (!buffer) return null;
 
@@ -90,7 +88,7 @@ async function uploadImage(base64Data: string, bucket: string): Promise<{ key: s
       Key: key,
       Body: buffer,
       ContentType: extractMimeType(base64Data),
-    })
+    }),
   );
 
   return { key, etag: response.ETag || "" };
@@ -98,7 +96,7 @@ async function uploadImage(base64Data: string, bucket: string): Promise<{ key: s
 
 async function migrateBatch(
   patients: Array<{ id: number; radiologyImageFilePathOrLink: string | null }>,
-  bucket: string
+  bucket: string,
 ): Promise<MigrationResult[]> {
   const results: MigrationResult[] = [];
 
@@ -200,7 +198,9 @@ async function runMigration(): Promise<void> {
   const { rows } = await pool.query<{
     id: number;
     radiologyImageFilePathOrLink: string | null;
-  }>(`SELECT id, radiology_image_file_path_or_link FROM patients WHERE radiology_image_file_path_or_link IS NOT NULL AND radiology_image_file_path_or_link != ''`);
+  }>(
+    `SELECT id, radiology_image_file_path_or_link FROM patients WHERE radiology_image_file_path_or_link IS NOT NULL AND radiology_image_file_path_or_link != ''`,
+  );
 
   console.log(`Found ${rows.length} patients with image paths`);
 
@@ -228,7 +228,7 @@ async function runMigration(): Promise<void> {
   console.log(`Skipped: ${totalSkipped}`);
   console.log(`Failed: ${totalFailed}`);
 
-  const errorResults = allResults.filter(r => r.status === "failed");
+  const errorResults = allResults.filter((r) => r.status === "failed");
   if (errorResults.length > 0) {
     console.log("\nFailed migrations:");
     for (const r of errorResults) {

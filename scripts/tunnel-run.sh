@@ -7,10 +7,14 @@ cd "$ROOT"
 # API is served through the persistent Cloudflare tunnel `research-api`
 # (config: ~/.cloudflared/research-api.yml). Its ingress points
 # api.research-center.fit -> the local nginx proxy on $PROXY_PORT, which
-# splits traffic: /api -> api-server, / -> MinIO (S3). No ngrok dependency.
+# proxies /api/* to the api-server and returns 404 for everything else
+# (MinIO / S3 is deliberately NOT exposed — see the location block below).
+# No ngrok dependency.
 TUNNEL_CONFIG="${TUNNEL_CONFIG:-$HOME/.cloudflared/research-api.yml}"
 TUNNEL_NAME="${TUNNEL_NAME:-research-api}"
-API_PORT="${API_PORT:-3000}"
+# Repo-wide port scheme (see README "Ports" / scripts/dev.sh): the api-server
+# is 4000 everywhere.
+API_PORT="${API_PORT:-4000}"
 MINIO_PORT="${MINIO_PORT:-9000}"
 PROXY_PORT="${PROXY_PORT:-8080}"
 KILO="${KILO_DIR:-/tmp/kilo}"
@@ -31,7 +35,12 @@ pkill -f "artifacts/api-server/src/index.ts" 2>/dev/null || true
 rm -f "$KILO"/*.pid
 sleep 2
 
-echo "==> 1/5 Starting docker (Postgres + MinIO)"
+echo "==> 1/6 Installing workspace deps (root, --frozen-lockfile)"
+# Once, at the repo root, against the committed lockfile. Installing inside
+# research/ made pnpm re-resolve the whole workspace on every run.
+pnpm install --frozen-lockfile
+
+echo "==> 2/6 Starting docker (Postgres + MinIO)"
 $DC up -d
 for i in $(seq 1 60); do
   if $DC exec -T postgres pg_isready -U postgres -d mednexus >/dev/null 2>&1; then break; fi
@@ -39,7 +48,7 @@ for i in $(seq 1 60); do
 done
 $DC exec -T postgres pg_isready -U postgres -d mednexus >/dev/null 2>&1 || { echo "ERROR: Postgres not ready"; exit 1; }
 
-echo "==> 2/5 Starting nginx proxy ($PROXY_PORT: /api -> $API_PORT, / -> $MINIO_PORT)"
+echo "==> 3/6 Starting nginx proxy ($PROXY_PORT: /api -> $API_PORT, / -> 404)"
 cat > "$KILO/nginx-proxy.conf" <<NGINX
 worker_processes 1;
 daemon on;
@@ -51,7 +60,6 @@ http {
   client_max_body_size 0;
   proxy_request_buffering off;
   upstream apisrv { server 127.0.0.1:$API_PORT; }
-  upstream minio { server 127.0.0.1:$MINIO_PORT; }
   server {
     listen $PROXY_PORT;
     location ~ ^/api(/|\$) {
@@ -61,12 +69,15 @@ http {
       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto https;
     }
+    # ---- MinIO / S3 API is deliberately NOT proxied -------------------------
+    # WHY: this bucket holds PHI (radiology images, database dumps, backups).
+    # The old `location / { proxy_pass http://minio; }` published the S3 API
+    # unauthenticated through the public tunnel, even on this "dev" run — the
+    # tunnel hostname resolves to the internet. Nothing needs it: the SPA uses
+    # presigned URLs from the api-server and the api-server talks to MinIO
+    # over loopback. Hard 404, no proxy_pass, no `upstream minio`.
     location / {
-      proxy_pass http://minio;
-      proxy_set_header Host \$host;
-      proxy_set_header X-Real-IP \$remote_addr;
-      proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto https;
+      return 404 "Not Found\n";
     }
   }
 }
@@ -74,7 +85,7 @@ NGINX
 nginx -c "$KILO/nginx-proxy.conf" -p "$KILO/" 2>&1
 sleep 1
 
-echo "==> 3/5 Starting Cloudflare tunnel ($TUNNEL_NAME -> $PROXY_PORT via nginx)"
+echo "==> 4/6 Starting Cloudflare tunnel ($TUNNEL_NAME -> $PROXY_PORT via nginx)"
 setsid nohup cloudflared tunnel --config "$TUNNEL_CONFIG" run "$TUNNEL_NAME" > "$KILO/cloudflared.log" 2>&1 &
 echo $! > "$KILO/cloudflared.pid"
 # Give the tunnel a moment to register with the Cloudflare edge.
@@ -84,22 +95,24 @@ for i in $(seq 1 30); do
 done
 grep -q "Registered tunnel connection" "$KILO/cloudflared.log" 2>/dev/null || echo "WARN: tunnel not yet registered (see $KILO/cloudflared.log)"
 
-echo "==> 4/5 Restarting api-server (S3 via local MinIO:9000, served to browser through /api/storage proxy)"
+echo "==> 5/6 Restarting api-server (S3 via local MinIO:9000, served to browser through /api/storage proxy)"
 export PORT="$API_PORT"
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/mednexus"
-export SESSION_SECRET="dev-secret"
+export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@localhost:5432/mednexus}"
+export SESSION_SECRET="${SESSION_SECRET:-dev-secret}"
 export APP_USERNAME="admin"
 export APP_PASSWORD_HASH='$2b$10$your-bcrypt-hash-here'
 export S3_ENDPOINT="http://localhost:9000"
-export S3_ACCESS_KEY_ID="minioadmin"
-export S3_SECRET_ACCESS_KEY="minioadmin"
+# Dev defaults; these are only safe because docker-compose.yml binds MinIO to
+# 127.0.0.1. Override via the environment for anything shared.
+export S3_ACCESS_KEY_ID="${S3_ACCESS_KEY_ID:-minioadmin}"
+export S3_SECRET_ACCESS_KEY="${S3_SECRET_ACCESS_KEY:-minioadmin}"
 export S3_BUCKET="mednexus"
 export S3_FORCE_PATH_STYLE="true"
 export S3_SIGNED_URL_EXPIRES_SECONDS="300"
-export PUBLIC_OBJECT_SEARCH_PATHS="/mednexus"
-export PRIVATE_OBJECT_DIR="/mednexus"
+export PUBLIC_OBJECT_SEARCH_PATHS="${PUBLIC_OBJECT_SEARCH_PATHS:-/mednexus}"
+export PRIVATE_OBJECT_DIR="${PRIVATE_OBJECT_DIR:-/mednexus}"
 export NODE_ENV="development"
-export ALLOWED_ORIGINS="http://localhost:3003,http://localhost:3004,http://127.0.0.1:3003,http://127.0.0.1:3004"
+export ALLOWED_ORIGINS="${ALLOWED_ORIGINS:-http://localhost:4003,http://localhost:4004,http://127.0.0.1:4003,http://127.0.0.1:4004}"
 setsid nohup pnpm exec tsx artifacts/api-server/src/index.ts > "$KILO/api-server.log" 2>&1 &
 echo $! > "$KILO/api-server.pid"
 for i in $(seq 1 60); do
@@ -108,16 +121,18 @@ for i in $(seq 1 60); do
 done
 curl -sf "http://localhost:$API_PORT/api/healthz" >/dev/null 2>&1 || { echo "ERROR: api-server did not start (see $KILO/api-server.log)"; exit 1; }
 
-echo "==> 5/5 Applying D1 schema migration"
-( cd research && pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql )
+echo "==> 6/6 Applying D1 schema migration (with retry on transient auth)"
+"$ROOT/scripts/with-d1-retry.sh"
 
-echo "==> 5/5 Linking Worker (research-center.fit) to the Cloudflare tunnel"
+echo "==> Linking Worker (research-center.fit) to the Cloudflare tunnel"
+# No `pnpm install` here: step 1 installed the whole workspace from the frozen
+# lockfile, so research/node_modules is present.
 ( cd research && \
   printf '%s' "https://api.research-center.fit" | pnpm exec wrangler secret put --env production API_BACKEND_URL && \
-  pnpm install && pnpm exec wrangler deploy --env production )
+  pnpm exec wrangler deploy --env production )
 
 echo ""
 echo "DONE."
 echo "  research-center.fit -> Cloudflare tunnel research-api (https://api.research-center.fit)"
-echo "  nginx proxy :$PROXY_PORT splits /api -> api-server, / -> MinIO"
+echo "  nginx proxy :$PROXY_PORT proxies /api -> api-server; everything else 404 (MinIO not exposed)"
 echo "  Logs: $KILO/{cloudflared,nginx-proxy,api-server}.log"

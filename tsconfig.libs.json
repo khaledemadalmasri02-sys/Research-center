@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    // `lib/stats` and `lib/api-spec` are outside the `tsc --build` project
+    // graph (they are not `composite`), so they are covered here instead of
+    // in `tsconfig.json`'s `references`. See the report: making them proper
+    // referenced projects requires editing `lib/**`, which this change did not
+    // touch.
+    //
+    // @types/node is not a root dependency; it is resolved from the packages
+    // that declare it via `typeRoots`.
+    "typeRoots": ["./lib/stats/node_modules/@types", "./node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": ["lib/stats/src/**/*", "lib/api-spec/**/*.ts"]
+}

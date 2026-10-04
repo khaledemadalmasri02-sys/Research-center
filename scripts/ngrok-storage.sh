@@ -10,14 +10,25 @@
 #   4. start `ngrok http 9000 --domain=<reserved>` in the background
 #   5. write the resulting S3 endpoint/credentials into research/.env
 #
+# !! THIS SCRIPT PUBLISHES THE PHI BUCKET TO THE PUBLIC INTERNET.          !!
+# !! MinIO holds radiology images, patient documents, database dumps and    !!
+# !! backups. An ngrok URL is a public URL: with the S3 root credentials the  !!
+# !! holder can list, read and write every object. It is therefore DISABLED  !!
+# !! unless you explicitly acknowledge the risk and supply non-default      !!
+# !! credentials:                                                          !!
+# !!   ALLOW_PUBLIC_MINIO_TUNNEL=1 \                                        !!
+# !!   MINIO_ROOT_USER=… MINIO_ROOT_PASSWORD=… pnpm run ngrok              !!
+# !! The supported production path needs none of this: `pnpm research` puts  !!
+# !! MinIO behind an nginx proxy that 404s every non-/api path, and the SPA  !!
+# !! reaches objects through api-server-issued presigned URLs.              !!
+#
 # Usage:
-#   pnpm run ngrok                                  # free tier: random ngrok URL (auto-detected)
-#   NGROK_DOMAIN=your-name.ngrok.dev pnpm run ngrok # reserved/static domain
+#   ALLOW_PUBLIC_MINIO_TUNNEL=1 pnpm run ngrok                                  # free tier: random ngrok URL
+#   NGROK_DOMAIN=your-name.ngrok.dev … pnpm run ngrok                           # reserved/static domain
 #
 # Prereqs:
 #   - ngrok installed and authed (`ngrok config add-authtoken ...`)
-#   - docker + docker-compose available
-#   - MinIO creds match docker-compose (minioadmin/minioadmin by default)
+#   - docker + docker compose available
 #
 # Note: a free-tier ngrok URL changes on every restart, so re-run this script
 # (and restart wrangler dev) whenever ngrok is restarted.
@@ -27,17 +38,46 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+if [ "${ALLOW_PUBLIC_MINIO_TUNNEL:-}" != "1" ]; then
+  cat >&2 <<'MSG'
+ERROR: scripts/ngrok-storage.sh is disabled by default.
+
+It would put the MinIO S3 endpoint — the bucket holding radiology images,
+patient documents, database dumps and backups — behind a PUBLIC ngrok URL.
+The same exposure was removed from the production nginx proxy (which now
+returns 404 for every non-/api path), so this script must not silently
+reintroduce it.
+
+If you genuinely need a temporary public S3 endpoint (e.g. wrangler dev on
+another machine), re-run it with an explicit acknowledgement and non-default
+credentials:
+
+  ALLOW_PUBLIC_MINIO_TUNNEL=1 \
+  MINIO_ROOT_USER=<user> MINIO_ROOT_PASSWORD=<password> pnpm run ngrok
+MSG
+  exit 1
+fi
+
 NGROK_DOMAIN="${NGROK_DOMAIN:-}"
-MINIO_ROOT_USER="${MINIO_ROOT_USER:-minioadmin}"
-MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-minioadmin}"
+# No silent fallback to minioadmin/minioadmin: a public tunnel plus published
+# default credentials is an unauthenticated PHI bucket.
+: "${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set (the minioadmin default is not acceptable for a public tunnel)}"
+: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set}"
+case "${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}" in
+  minioadmin:minioadmin)
+    echo "ERROR: refusing to publish MinIO with the default minioadmin credentials." >&2
+    exit 1
+    ;;
+esac
 S3_BUCKET="${S3_BUCKET:-mednexus}"
 S3_REGION="${S3_REGION:-auto}"
 ENV_FILE="$ROOT/research/.env"
 
 command -v ngrok >/dev/null 2>&1 || { echo "ERROR: ngrok is not installed / not on PATH" >&2; exit 1; }
+if docker compose version >/dev/null 2>&1; then DC="docker compose"; else DC="docker-compose"; fi
 
-echo "==> 1/5 Starting MinIO (docker-compose)"
-docker-compose up -d
+echo "==> 1/5 Starting MinIO ($DC)"
+$DC up -d
 
 echo "==> 2/5 Waiting for MinIO to be ready"
 for _ in $(seq 1 60); do
@@ -49,10 +89,10 @@ for _ in $(seq 1 60); do
 done
 
 echo "==> 3/5 Creating bucket '$S3_BUCKET' in MinIO"
-docker-compose exec -T minio mc alias set local "http://localhost:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 || true
-docker-compose exec -T minio mc mb --ignore-existing "local/$S3_BUCKET" 2>/dev/null || echo "    (bucket may already exist)"
-docker-compose exec -T minio mc mb --ignore-existing "local/$S3_BUCKET/radiology-public" 2>/dev/null || true
-docker-compose exec -T minio mc mb --ignore-existing "local/$S3_BUCKET/radiology-objects" 2>/dev/null || true
+$DC exec -T minio mc alias set local "http://localhost:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null 2>&1 || true
+$DC exec -T minio mc mb --ignore-existing "local/$S3_BUCKET" 2>/dev/null || echo "    (bucket may already exist)"
+$DC exec -T minio mc mb --ignore-existing "local/$S3_BUCKET/radiology-public" 2>/dev/null || true
+$DC exec -T minio mc mb --ignore-existing "local/$S3_BUCKET/radiology-objects" 2>/dev/null || true
 
 echo "==> 4/5 Starting ngrok tunnel${NGROK_DOMAIN:+ (reserved domain: $NGROK_DOMAIN)}"
 ngrok http 9000 ${NGROK_DOMAIN:+--url="https://$NGROK_DOMAIN"} > /tmp/ngrok-storage.log 2>&1 &

@@ -1,15 +1,35 @@
-version: "3.8"
+# Local infrastructure for the research platform: Postgres (patient/metadata
+# DB) + MinIO (radiology images, database dumps, backups).
+#
+# Host publication policy
+# -----------------------
+# These services used to publish 5432 / 9000 / 9001 on 0.0.0.0, i.e. reachable
+# from every network the host is attached to (LAN, office Wi-Fi, cloud
+# metadata ranges). Both stores hold PHI. Host publication was removed: the
+# only intended ingress is the nginx proxy on :8080 -> Cloudflare tunnel
+# (api.research-center.fit), which only exposes /api/* to the api-server.
+#
+# Ports that are still published are bound to 127.0.0.1 explicitly, so they are
+# reachable from processes on this host (the api-server runs on the HOST, not
+# in a container, and talks to Postgres/MinIO over loopback) but not from the
+# network. Do not widen these bindings without a firewall review.
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Pinned to an exact patch release (was the floating `postgres:16-alpine`,
+    # which silently changes minor/patch on every pull). Pinned for
+    # reproducibility; bump deliberately (and re-check the release notes for
+    # security fixes).
+    image: postgres:16.15-alpine
     container_name: mednexus-postgres
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-mednexus}
     ports:
-      - "5432:5432"
+      # Loopback only: the host-run api-server (scripts/dev.sh,
+      # scripts/research-deploy.sh) and `psql` need this; nothing off-host does.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,15 +39,31 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # Pinned to an explicit dated release (was `minio/minio:latest`, so a pull
+    # could silently change the object-store implementation under live PHI).
+    # Pinned for reproducibility; bump deliberately.
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     container_name: mednexus-minio
     command: server /data --console-address ":9001"
     environment:
+      # Root credentials for the PHI bucket. Override BOTH via .env /
+      # the environment; `minioadmin` is the published default and must never
+      # be used for anything reachable from a network. `pnpm research`
+      # (scripts/research-deploy.sh) refuses to start with these defaults.
       MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:-minioadmin}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      # Loopback only: S3 data path for the host-run api-server and for
+      # `pnpm run wait-for-services` (curl http://localhost:9000/health/live).
+      - "127.0.0.1:9000:9000"
+    expose:
+      # The web console (9001) is for humans only and nothing in the repo
+      # connects to it programmatically, so it is NOT published to the host at
+      # all — it was previously on 0.0.0.0, which is how an unauthenticated
+      # admin console ended up on the internet. Reach it with
+      # `docker compose exec -T minio mc ...`, or temporarily add
+      # `- "127.0.0.1:9001:9001"` here if you need the UI.
+      - "9001"
     volumes:
       - minio_data:/data
     healthcheck:

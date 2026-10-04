@@ -2,7 +2,10 @@ name = "research"
 compatibility_date = "2025-04-01"
 main = "src/index.ts"
 workers_dev = false
-account_id = "1c6980a08850bab43d5a92964a29a37f"
+# account_id is NOT committed. Cloudflare reads CLOUDFLARE_ACCOUNT_ID from the
+# environment; exporting it (or running `wrangler login`) is all that is needed.
+# Committing the account id hands anyone who clones the repo the ability to
+# enumerate and target this account's Workers, D1 databases and KV namespaces.
 
 # Static Assets: Cloudflare serves the SPA directly (cached at the edge).
 # Only /api/* requests are sent to the Worker; everything else (HTML, JS, CSS,
@@ -12,9 +15,19 @@ account_id = "1c6980a08850bab43d5a92964a29a37f"
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-# Run the Worker first for every request so we can inject a per-host canonical
-# <link> into HTML documents (both research-center.fit and www. serve content).
-run_worker_first = ["/*"]
+# PERF: this was ["/*"], which forced EVERY static asset (each hashed JS/CSS
+# chunk, each image, each font) through a Worker invocation plus an
+# assets.fetch() subrequest — paying full request latency and burning the
+# platform's free daily Worker-invocation allowance on files the assets layer
+# can serve from cache directly.
+#
+# Now only "/api/*" runs the Worker first, restoring the zero-invocation path
+# for static assets. "/" and "/index.html" are included because
+# src/index.ts registers an `app.use("*")` middleware that injects a per-host
+# `<link rel="canonical">` and WebSite JSON-LD into HTML documents; without them
+# the canonical tag would disappear from the homepage. HTML is a tiny fraction of
+# traffic, so the cost is negligible next to the savings on JS/CSS/images.
+run_worker_first = ["/api/*", "/", "/index.html"]
 
 [[kv_namespaces]]
 binding = "SESSIONS"
@@ -39,7 +52,8 @@ routes = ["research-center.fit/*", "www.research-center.fit/*"]
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/*"]
+# Same reasoning as the top-level [assets] block; keep the two in sync.
+run_worker_first = ["/api/*", "/", "/index.html"]
 
 [[env.production.kv_namespaces]]
 binding = "SESSIONS"
@@ -70,5 +84,46 @@ database_id = "83132b57-3fe6-4bec-bc90-b782fddcc2bc"
 #   Routing Rule that sends *@research-center.fit to this Worker. The Worker's
 #   email() handler parses the message and POSTs it to the api-server
 #   /api/inbound-email (authenticated with the INBOUND_EMAIL_SECRET secret).
-# Replies are sent later from the api-server via sendEmail() (support@...).
+#   Replies are sent later from the api-server via sendEmail() (support@...).
+#   NOTE: src/routes/unsubscribe.ts also derives its HMAC unsubscribe token from
+#   INBOUND_EMAIL_SECRET (or a dedicated UNSUBSCRIBE_TOKEN / ERASURE_SECRET if
+#   set), so the api-server must use the SAME secret value to mint those links.
 
+# ---- Staging / preview ------------------------------------------------------
+# research/STATUS.md tells operators to deploy staging with
+#   `wrangler deploy --env preview`
+# but this environment did not exist: without it, wrangler inherits the top-level
+# bindings only, so `preview` deployed a Worker with an unbound `DB` /
+# `SESSIONS` / `ASSETS` and every request failed at runtime with
+# "Cannot read properties of undefined" — a failure that looks like an app bug.
+#
+# The ids below MUST be replaced with real staging resource ids created with
+#   wrangler kv namespace create SESSIONS --env preview
+#   wrangler d1 database create mednexus-research-staging
+# Deliberately left as obvious placeholders: a wrong-but-plausible id would point
+# staging at PRODUCTION data, which is a far worse outcome than a deploy-time
+# error. Staging must never read or write the production PHI database.
+[env.preview]
+name = "research-preview"
+logpush = false
+
+[env.preview.assets]
+directory = "./public"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*", "/", "/index.html"]
+
+[[env.preview.kv_namespaces]]
+binding = "SESSIONS"
+id = "REPLACE_WITH_STAGING_KV_NAMESPACE_ID"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "mednexus-research-staging"
+database_id = "REPLACE_WITH_STAGING_D1_DATABASE_ID"
+
+[env.preview.vars]
+# API_BACKEND_URL must be set as a SECRET for this environment too:
+#   wrangler secret put API_BACKEND_URL --env preview
+# The D1 schema is created at runtime by src/lib/db-bootstrap.ts
+# (ensureSchema), so staging does not need a separate d1:migrate run.

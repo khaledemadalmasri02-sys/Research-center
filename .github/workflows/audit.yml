@@ -19,16 +19,17 @@ jobs:
     name: pnpm audit (prod)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 9
+          version: 11
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: "22"
           cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install workspace dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
@@ -54,7 +55,7 @@ jobs:
         run: pnpm audit --prod --audit-level=info > audit-full.txt || true
 
       - name: Upload audit report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pnpm-audit-report
           path: audit*.txt
@@ -62,7 +63,7 @@ jobs:
 
       - name: Open issue on audit failure
         if: env.AUDIT_EXIT != '0' && env.AUDIT_EXIT != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const fs = require('node:fs');

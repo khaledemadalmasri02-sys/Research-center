@@ -5,61 +5,329 @@ on:
     branches: [main, master]
   pull_request:
 
+# Cancel superseded runs on the same ref: a new push to a PR makes the old
+# run's results irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only by default. Jobs that need more (e.g. uploading artefacts) opt in.
+permissions:
+  contents: read
+
+# Single source of truth for the toolchain. `node-version: '22'` keeps
+# every job on the same Node as a developer's local shell.
+env:
+  NODE_VERSION_FILE: .nvmrc
+  # The SPA is served from the Worker root in production.
+  BASE_PATH: /
+
 jobs:
+  # ---------------------------------------------------------------------
+  # setup — the one authoritative `pnpm install`
+  # ---------------------------------------------------------------------
+  # GitHub jobs each get a fresh runner, so `node_modules` cannot literally be
+  # shared between jobs. What *can* be shared is the pnpm content-addressable
+  # store: `setup` performs the canonical `pnpm install --frozen-lockfile`
+  # (which is also the gate that catches a stale lockfile), then seeds the
+  # cache that every downstream job restores.
+  setup:
+    name: setup (pnpm install)
+    runs-on: ubuntu-latest
+    outputs:
+      cache-key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Compute node_modules cache key
+        id: key
+        run: echo "key=node-modules-22-$(pnpm --version)-$(hashFiles('pnpm-lock.yaml') | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Restore node_modules
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ steps.key.outputs.key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Install workspace dependencies
+        run: pnpm install --frozen-lockfile
+
+  # ---------------------------------------------------------------------
+  # typecheck
+  # ---------------------------------------------------------------------
+  # `vite build` strips types without checking them, so the SPA had no type
+  # gate at all before this job.
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Typecheck libs + tests + every package
+        run: pnpm run typecheck
+
+  # ---------------------------------------------------------------------
+  # lint
+  # ---------------------------------------------------------------------
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Prettier
+        run: pnpm run format:check
+      - name: ESLint
+        run: pnpm run lint
+
+  # ---------------------------------------------------------------------
+  # build + bundle-size budget
+  # ---------------------------------------------------------------------
+  build-spa:
+    name: build SPA + bundle budget
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Build SPA
+        run: pnpm -C artifacts/research-data run build
+        env:
+          BASE_PATH: /
+      - name: Upload dist
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: spa-dist
+          path: artifacts/research-data/dist
+          retention-days: 3
+      # Bundle budget: the SPA ships every byte to a browser on a PHI
+      # application, so growth has to be a deliberate decision, not a
+      # side effect of a dependency bump.
+      - name: Enforce bundle-size budget
+        run: |
+          set -euo pipefail
+          DIST="artifacts/research-data/dist/public"
+          [ -d "$DIST" ] || DIST="artifacts/research-data/dist"
+          # Uncompressed JS+CSS budget for the whole app.
+          MAX_JS_KB="${MAX_JS_KB:-1400}"
+          # Per-chunk budget: a single chunk over this means one dependency
+          # (or one route) has ballooned.
+          MAX_CHUNK_KB="${MAX_CHUNK_KB:-600}"
+          ACTUAL=$(find "$DIST" -type f \( -name '*.js' -o -name '*.css' \) -printf '%s\n' \
+                   | awk '{s+=$1} END {printf "%.0f", s/1024}')
+          echo "total js+css: ${ACTUAL} KiB (budget ${MAX_JS_KB} KiB)"
+          BIGGEST=$(find "$DIST" -type f \( -name '*.js' -o -name '*.css' \) -printf '%s %p\n' \
+                   | sort -rn | head -5)
+          echo "largest assets:"
+          echo "$BIGGEST"
+          CHUNK_MAX=$(echo "$BIGGEST" | awk 'NR==1 {printf "%.0f", $1/1024}')
+          echo "largest single asset: ${CHUNK_MAX} KiB (budget ${MAX_CHUNK_KB} KiB)"
+          if [ "$ACTUAL" -gt "$MAX_JS_KB" ]; then
+            echo "::error::SPA js+css budget exceeded: ${ACTUAL} KiB > ${MAX_JS_KB} KiB"
+            exit 1
+          fi
+          if [ "$CHUNK_MAX" -gt "$MAX_CHUNK_KB" ]; then
+            echo "::error::SPA single-asset budget exceeded: ${CHUNK_MAX} KiB > ${MAX_CHUNK_KB} KiB"
+            exit 1
+          fi
+
+  # ---------------------------------------------------------------------
+  # Worker: typecheck, schema drift, tests, deploy dry-run
+  # ---------------------------------------------------------------------
   test-research:
     name: research (Worker)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: research
+    needs: setup
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: research/package-lock.json
-      - name: Install dependencies
-        run: npm ci
-      - name: Typecheck
-        run: npx tsc -p tsconfig.json --noEmit
-      - name: Schema consistency check
-        run: npx tsx scripts/check-schema.ts
-      - name: Test
-        run: npx vitest run
-      # P1.20: build the SPA in CI to confirm the build pipeline is
-      # green. The Worker serves research/public/ via the ASSETS
-      # binding, so this is what gets deployed. We don't commit the
-      # build artefacts (see .gitignore); deploy scripts run the same
-      # build. This job catches "build is broken on main" early.
-      - name: Install frontend deps + build SPA
-        working-directory: artifacts/research-data
-        run: pnpm install --frozen-lockfile && BASE_PATH=/ pnpm run build
-        env:
-          BASE_PATH: /
-      - name: Test frontend (lib tests)
-        # P2.1: pure-module tests for the research-data frontend
-        # library code (medical correction, vitals, radiology images,
-        # crash reporter, import filter). Uses node --test with the
-        # built-in TypeScript stripper, no jsdom needed because all
-        # targets are pure functions.
-        working-directory: artifacts/research-data
-        run: pnpm run test
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      - name: Typecheck Worker
+        run: pnpm -C research run typecheck
+      # D1 <-> Postgres schema-drift guard. This previously invoked
+      # `npx tsx scripts/check-schema.ts`, which does not exist (the real file
+      # is research/scripts/check-schema.mjs, wired as `check:schema`), so the
+      # guard had never actually run.
+      - name: Schema consistency check (D1 vs Postgres)
+        run: pnpm -C research run check:schema
+      - name: Test Worker
+        run: pnpm -C research run test
+
+  build-smoke:
+    name: Worker build smoke (wrangler --dry-run)
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      # `wrangler deploy --dry-run` bundles + minifies the Worker through the
+      # real pipeline (esbuild + workerd) without touching Cloudflare. This is
+      # the only CI check that would catch a bundling/import regression in
+      # research/src.
+      - name: wrangler deploy --dry-run
+        run: pnpm -C research run build:check
+
+  test-frontend:
+    name: research-data (SPA) tests
+    runs-on: ubuntu-latest
+    needs: setup
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
+      # `test:vitest` was defined but never invoked by any workflow. `test` is
+      # now an alias for the same vitest invocation, so both are the single
+      # runner: one glob, one set of results.
+      - name: Vitest (unit + component)
+        run: pnpm -F @workspace/research-data run test:vitest
+      - name: a11y component axe scan
+        run: pnpm -F @workspace/research-data exec vitest run --config vitest.config.ts tests/a11y-axe-vitest.test.tsx
 
   test-api-server:
     name: api-server
     runs-on: ubuntu-latest
+    needs: setup
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 9
-      - uses: actions/setup-node@v4
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: "22"
           cache: pnpm
-      - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
       - name: Build @workspace/db (declarations)
         run: pnpm -F @workspace/db exec tsc -p tsconfig.json
       - name: Typecheck
@@ -71,17 +339,28 @@ jobs:
   codegen-check:
     name: OpenAPI codegen drift check (P1.16)
     runs-on: ubuntu-latest
+    needs: setup
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 9
-      - uses: actions/setup-node@v4
+          version: 11
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: 20
+          node-version: "22"
           cache: pnpm
-      - name: Install workspace dependencies
-        run: pnpm install --frozen-lockfile
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            node_modules
+            artifacts/*/node_modules
+            lib/*/node_modules
+            scripts/node_modules
+            research/node_modules
+          key: ${{ needs.setup.outputs.cache-key }}
+          restore-keys: |
+            node-modules-22-${{ runner.os }}-
       # Run orval in a sandbox, diff against the committed
       # lib/api-client-react/src/generated/. Fails the build if the
       # OpenAPI spec has changed without a matching codegen run.

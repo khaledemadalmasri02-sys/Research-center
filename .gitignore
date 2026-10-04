@@ -62,6 +62,11 @@ research/.dev.vars
 .replit
 .replit.nix
 
+# Browser-automation scratch output (screenshots, traces, session state).
+# Written by the playwright MCP tooling on every run; was neither tracked nor
+# ignored, so it showed up in every `git status`.
+.playwright-mcp/
+
 # Wrangler local state (D1/KV SQLite, caches, observability) — never commit
 research/.wrangler/
 artifacts/**/*.wrangler/

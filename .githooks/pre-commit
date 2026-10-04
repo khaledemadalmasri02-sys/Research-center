@@ -1,20 +1,67 @@
 #!/usr/bin/env bash
-# Pre-commit hook. Two checks:
-#   1. gitleaks secret scan on staged files (P0.1).
-#   2. OpenAPI codegen drift check (P2.8) when relevant files are
+# Pre-commit hook. Three checks, cheapest-first:
+#   1. Prettier + ESLint on the staged files (fast, scoped).
+#   2. gitleaks secret scan on staged files (P0.1).
+#   3. OpenAPI codegen drift check (P2.8) when relevant files are
 #      staged — i.e. openapi.yaml or anything under
 #      lib/api-client-react/src/generated/.
 #
-# Install: git config core.hooksPath .githooks
+# Install: `git config core.hooksPath .githooks`
+# The root `prepare` script does this automatically on `pnpm install`, so a
+# fresh clone self-installs the hook.
 #
-# The codegen check runs orval in a sandboxed config and diffs the
-# output against the committed `lib/api-client-react/src/generated/`.
-# It is a few-second check, so we run it inline. If pnpm is not
-# installed, we skip the codegen check (CI will catch it).
+# Every check degrades gracefully: if the tool is not installed the hook says
+# so and moves on, because CI runs the same gates. Only a check that actually
+# ran and failed blocks the commit.
 
 set -euo pipefail
 
-# ----- 1. gitleaks ---------------------------------------------------------
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# Files we can meaningfully check, limited to what is actually staged.
+mapfile -t STAGED < <(
+  git diff --cached --name-only --diff-filter=ACMR \
+    | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|json|jsonc|md|ya?ml|css|html)$' \
+    | grep -vE '^(pnpm-lock\.yaml|package-lock\.json)$' \
+    || true
+)
+
+if [ "${#STAGED[@]}" -eq 0 ]; then
+  echo "[pre-commit] No checkable staged files."
+fi
+
+# ----- 1. Prettier + ESLint ------------------------------------------------
+
+if [ "${#STAGED[@]}" -gt 0 ] && [ -d node_modules ]; then
+  if [ -x node_modules/.bin/prettier ]; then
+    echo "[pre-commit] prettier --check on ${#STAGED[@]} staged file(s)..."
+    if ! node_modules/.bin/prettier --check "${STAGED[@]}"; then
+      echo ""
+      echo "[pre-commit] Prettier FAILED."
+      echo "             Run 'pnpm run format' (or 'pnpm exec prettier --write <file>')."
+      exit 1
+    fi
+  else
+    echo "[pre-commit] prettier not installed; skipping format check (CI will catch it)."
+  fi
+
+  if [ -x node_modules/.bin/eslint ]; then
+    echo "[pre-commit] eslint on ${#STAGED[@]} staged file(s)..."
+    if ! node_modules/.bin/eslint "${STAGED[@]}"; then
+      echo ""
+      echo "[pre-commit] ESLint FAILED."
+      echo "             Run 'pnpm run lint:fix' for autofixable rules, or fix by hand."
+      exit 1
+    fi
+  else
+    echo "[pre-commit] eslint not installed; skipping lint (CI will catch it)."
+  fi
+else
+  echo "[pre-commit] Nothing staged to check with prettier/eslint (CI will catch it)."
+fi
+
+# ----- 2. gitleaks ---------------------------------------------------------
 
 if command -v gitleaks >/dev/null 2>&1; then
   echo "[pre-commit] Running gitleaks on staged files..."
@@ -24,7 +71,7 @@ else
   echo "             Install: https://github.com/gitleaks/gitleaks/releases"
 fi
 
-# ----- 2. OpenAPI codegen drift -------------------------------------------
+# ----- 3. OpenAPI codegen drift -------------------------------------------
 
 # Check whether any staged file would invalidate the generated clients.
 codegen_relevant_pattern='^(lib/api-spec/openapi\.yaml|lib/api-client-react/src/generated/.*|lib/api-spec/orval\.config\.ts|lib/api-client-react/src/custom-fetch\.ts)$'

@@ -50,11 +50,17 @@ export default defineConfig({
         entryFileNames: "assets/index.js",
         chunkFileNames: "assets/[name].js",
         assetFileNames: "assets/[name].[ext]",
+        manualChunks: {
+          recharts: ["recharts"],
+          excel: ["exceljs"],
+          xlsx: ["xlsx"],
+          jszip: ["jszip"],
+        },
       },
     },
   },
   server: {
-    port: 3004,
+    port: 4004,
     host: "0.0.0.0",
     allowedHosts: true,
     // In local/self-hosted dev the API server runs on a different port than the

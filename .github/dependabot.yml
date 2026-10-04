@@ -32,22 +32,24 @@ updates:
     labels:
       - "dependencies"
       - "pnpm"
-    # Skip any dependency that lives behind a pnpm override. The override
-    # is intentional (see pnpm-workspace.yaml comments), so an update
-    # would just re-pin and break. Ignore the umbrella override packages
-    # so Dependabot doesn't churn them.
+    commit-message:
+      prefix: "chore(deps)"
+    # Genuine exclusions only. This list used to contain a catch-all
+    # `{ dependency-name: "*", versions: ["*"] }` rule, which matched every
+    # dependency and silently disabled npm updates for the whole repository —
+    # Dependabot was configured but inert.
+    #
+    # Deliberately NOT excluded:
+    #   * the two `overrides:` pins in pnpm-workspace.yaml
+    #     (`@esbuild-kit/esm-loader`, `esbuild`). Dependabot proposing an
+    #     esbuild bump is *desired* — it is the signal that the override can
+    #     be relaxed. The override stays authoritative either way.
     ignore:
-      - dependency-name: "*"
-        # Don't touch @types/* or @workspace/* — they are workspace
-        # packages maintained by hand.
-        versions: ["*"]
-    # Allow-listed dependencies that should update normally even though
-    # there's a global `*` ignore above (Dependabot's ignore is
-    # AND-of-conditions, not OR).
-    # (Dependabot's `ignore` only blocks if the rule matches; explicit
-    # `allow` for the packages we want to update is impossible — we
-    # instead omit the catch-all ignore for npm updates and rely on
-    # commit-message conventions below.)
+      # Hand-maintained ambient type packages: they track the runtime major
+      # (Node, React) and are bumped deliberately, not weekly.
+      - dependency-name: "@types/*"
+      # Workspace-local packages have no published versions.
+      - dependency-name: "@workspace/*"
 
   # ----------------------------------------------------------------------
   # GitHub Actions versions
@@ -64,8 +66,8 @@ updates:
     labels:
       - "dependencies"
       - "github-actions"
-    # The v4 Actions runners are still supported; let Dependabot pick
-    # the latest tag automatically rather than pinning to a major.
-    ignore:
-      - dependency-name: "actions/checkout"
-        versions: ["<5.0.0"]
+    commit-message:
+      prefix: "chore(ci)"
+    # Workflow refs are pinned to full commit SHAs (see the `uses:` lines in
+    # .github/workflows/*.yml), so Dependabot's SHA-bump PRs are the only
+    # mechanism that can move them forward safely.

@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "lib": ["es2022", "dom", "dom.iterable"],
+    // `vitest.config.ts` sets `globals: true`, so suites may use
+    // `describe` / `it` / `expect` without importing them.
+    "types": ["node", "vite/client", "vitest/globals"],
+    // @types/node and vite/client are declared by the packages under test, not
+    // by the repo root, so they are resolved from those packages' node_modules.
+    "typeRoots": [
+      "./artifacts/research-data/node_modules/@types",
+      "./artifacts/research-data/node_modules",
+      "./node_modules/@types"
+    ],
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "bundler",
+    // Test fixtures intentionally carry unused helpers and partial mocks.
+    "noUnusedLocals": false,
+    "paths": {
+      "@/*": ["./artifacts/research-data/src/*"]
+    }
+  },
+  "include": ["artifacts/research-data/tests/**/*", "lib/stats/tests/**/*"]
+}

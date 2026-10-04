@@ -2,5 +2,5 @@
 # Apply the D1 schema to the PRODUCTION database (mednexus-research).
 set -euo pipefail
 
-cd "$(cd "$(dirname "$0")/.." && pwd)/research"
-pnpm exec wrangler d1 execute mednexus-research --env production --remote --file=./schema.sql
+cd "$(cd "$(dirname "$0")/.." && pwd)"
+exec "$(cd "$(dirname "$0")" && pwd)/with-d1-retry.sh"

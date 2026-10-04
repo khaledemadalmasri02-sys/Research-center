@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#0f172a" />
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1RCNKNZBYK"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-1RCNKNZBYK');
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <title>Research Center — Patient Research Data Collection</title>
     <meta name="description" content="Research Center for patient research: secure radiology patient data collection, medical image storage, and AI prediction tracking." />
@@ -15,11 +24,44 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Research Center — Patient Research Data Collection" />
     <meta name="twitter:description" content="Research Center for patient research: secure radiology patient data collection, medical image storage, and AI prediction tracking." />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/jpeg" sizes="32x32" href="/favicon-32.png" />
+    <link rel="icon" type="image/jpeg" sizes="16x16" href="/favicon-16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/android-chrome-192x192.png" />
+    <link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png" />
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!--
+      Pre-hydration theme + density + RTL bootstrap. Runs before React mounts
+      to avoid a flash of wrong theme / layout direction. Mirrors the keys
+      used by next-themes (class on <html>) and the density persisted by
+      the desktop shell.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+          var systemDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          var theme = stored || (systemDark ? "dark" : "light");
+          if (theme === "dark") document.documentElement.classList.add("dark");
+          else document.documentElement.classList.remove("dark");
+
+          var density = localStorage.getItem("app-density") || "comfortable";
+          document.documentElement.setAttribute("data-density", density);
+
+          var lang = localStorage.getItem("i18nextLng") || navigator.language || "en";
+          var rtl = lang === "ar" || lang === "he" || lang === "fa" || lang === "ur";
+          document.documentElement.setAttribute("dir", rtl ? "rtl" : "ltr");
+          document.documentElement.setAttribute("lang", lang);
+        } catch (_) {
+          /* localStorage may be unavailable (private mode, SSR); ignore. */
+        }
+      })();
+    </script>
     <script type="module" crossorigin src="/assets/index.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/recharts.js">
     <link rel="stylesheet" crossorigin href="/assets/index.css">
   </head>
   <body>

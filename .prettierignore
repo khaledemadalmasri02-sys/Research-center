@@ -1,0 +1,35 @@
+# Build output & vendored assets
+dist/
+dist-dryrun/
+build/
+coverage/
+*.tsbuildinfo
+
+# Dependencies
+node_modules/
+
+# Lockfiles / editor / OS noise
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# Generated clients
+lib/api-client-react/src/generated/
+
+# Built SPA bundles shipped with the Worker
+research/public/
+research/public-legacy/
+artifacts/research-data/public/
+
+# Local env & secrets
+.env
+.env.*
+!.env.example
+
+# Playwright / axe output
+playwright-report/
+test-results/
+.playwright-mcp/
+
+# Tool state
+.kilo/

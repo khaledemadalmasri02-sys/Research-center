@@ -4,7 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { mockupPreviewPlugin } from "./mockupPreviewPlugin";
 
-let port = 3003;
+let port = 4003;
 
 for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === "--port" && i + 1 < process.argv.length) {
@@ -37,7 +37,7 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       "/api": {
-        target: "http://localhost:3000",
+        target: "http://localhost:4000",
         changeOrigin: true,
         secure: false,
       },

@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "lib": ["es2022"],
+    "types": [],
+    // The Workers globals (ExecutionContext, KVNamespace, R2Bucket, ...) come
+    // from research/node_modules/@cloudflare/workers-types. That package lives
+    // in the `research` workspace, not at the repo root, so its declarations
+    // are pulled into the program by path instead of through `types` — adding
+    // it as a root devDependency would put a Workers-only global set in scope
+    // for every other project.
+    "paths": {
+      "@cloudflare/workers-types": ["./research/node_modules/@cloudflare/workers-types/index.d.ts"]
+    }
+  },
+  "include": ["research/test/**/*", "research/node_modules/@cloudflare/workers-types/index.d.ts"]
+}
