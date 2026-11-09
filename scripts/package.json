@@ -17,6 +17,6 @@
     "@types/node": "catalog:",
     "@types/pg": "^8.6.0",
     "tsx": "catalog:",
-    "typescript": "~5.9.2"
+    "typescript": "~7.0.2"
   }
 }
